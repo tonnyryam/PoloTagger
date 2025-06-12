@@ -1,9 +1,9 @@
-from torch.utils.data import Dataset
-import pandas as pd
-from torchvision import transforms as T
 import torch
-import cv2
+from torch.utils.data import Dataset
+import torchvision.transforms as T
+import pandas as pd
 import numpy as np
+import cv2
 
 class VideoClipDataset(Dataset):
     def __init__(self, metadata_csv, label_list, clip_len=5, fps=30, transform=None, permute=True):

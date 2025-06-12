@@ -1,9 +1,17 @@
 import torch
-import VideoClipDataset
-from torch.utils.data import DataLoader
-from torchvision.models.video import r3d_18
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader
+from torchvision.models.video import r3d_18
+from pipeline.dataset import VideoClipDataset
+
+label_list = [
+    "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
+    "Referee", "W CA", "W DEXC", "W 6/5", "D Goals", "D Shots", "D 5/6",
+    "W FCO", "W AG", "W New 20", "D Center", "W Shots", "W Center",
+    "D DEXC", "D 6/5", "W 5/6", "D Penalty", "W Penalty", "W Goals",
+    "D AG", "D FCO", "W Time Out"
+]
 
 def train_model(model, dataloader, criterion, optimizer, device, num_epochs=5):
     model.train()
@@ -25,35 +33,22 @@ def train_model(model, dataloader, criterion, optimizer, device, num_epochs=5):
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
 
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Replace with your actual label list
-label_list = [
-    "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
-    "Referee", "W CA", "W DEXC", "W 6/5", "D Goals", "D Shots", "D 5/6",
-    "W FCO", "W AG", "W New 20", "D Center", "W Shots", "W Center",
-    "D DEXC", "D 6/5", "W 5/6", "D Penalty", "W Penalty", "W Goals",
-    "D AG", "D FCO", "W Time Out"
-]
+    dataset = VideoClipDataset("data/metadata/clip_index.csv", label_list)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
-# Paths and hyperparameters
-metadata_csv_path = "data/metadata/clip_index.csv"
-batch_size = 4
-num_epochs = 5
-learning_rate = 1e-4
+    model = r3d_18(pretrained=True)
+    model.fc = nn.Linear(model.fc.in_features, len(label_list))
+    model = model.to(device)
 
-# Setup
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-dataset = VideoClipDataset(metadata_csv=metadata_csv_path, label_list=label_list)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-# Model
-model = r3d_18(pretrained=True)
-model.fc = nn.Linear(model.fc.in_features, len(label_list))
-model = model.to(device)
+    train_model(model, dataloader, criterion, optimizer, device, num_epochs=5)
 
-# Loss and optimizer
-criterion = nn.BCEWithLogitsLoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    torch.save(model.state_dict(), "models/r3d_18.pth")
 
-# Train
-train_model(model, dataloader, criterion, optimizer, device, num_epochs)
+if __name__ == "__main__":
+    main()
