@@ -5,6 +5,9 @@ from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18
 from pipeline.dataset import VideoClipDataset
 
+import importlib.util
+import os
+
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
     "Referee", "W CA", "W DEXC", "W 6/5", "D Goals", "D Shots", "D 5/6",
@@ -13,7 +16,19 @@ label_list = [
     "D AG", "D FCO", "W Time Out"
 ]
 
-def train_model(model, dataloader, criterion, optimizer, device, num_epochs=5):
+def load_feature_trainers(features_dir="features"):
+    trainers = []
+    for feature_name in os.listdir(features_dir):
+        path = os.path.join(features_dir, feature_name, "train.py")
+        if os.path.isfile(path):
+            spec = importlib.util.spec_from_file_location("train_" + feature_name, path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "add_feature_training"):
+                trainers.append(mod.add_feature_training)
+    return trainers
+
+def train_model(model, dataloader, criterion, optimizer, device, feature_trainers, num_epochs=5):
     model.train()
     for epoch in range(num_epochs):
         total_loss = 0
@@ -27,6 +42,9 @@ def train_model(model, dataloader, criterion, optimizer, device, num_epochs=5):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            for trainer in feature_trainers:
+                trainer(model, clips, labels)
 
             total_loss += loss.item()
 
@@ -46,7 +64,9 @@ def main():
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    train_model(model, dataloader, criterion, optimizer, device, num_epochs=5)
+    feature_trainers = load_feature_trainers("features")
+
+    train_model(model, dataloader, criterion, optimizer, device, feature_trainers, num_epochs=5)
 
     torch.save(model.state_dict(), "models/r3d_18.pth")
 
