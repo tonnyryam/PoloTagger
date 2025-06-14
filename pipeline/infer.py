@@ -5,6 +5,9 @@ import torchvision.transforms as T
 import cv2
 import numpy as np
 
+# Import cap number feature
+from features.cap_number.identifier import identify_numbers_in_frame, load_detector
+
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
     "Referee", "W CA", "W DEXC", "W 6/5", "D Goals", "D Shots", "D 5/6",
@@ -51,24 +54,31 @@ def preprocess_video(video_path, clip_len=5, fps=30, stride=2.5, transform=None)
     cap.release()
     return clips
 
-def predict_events(model, clips, label_list, device, threshold=0.5):
+def predict_events(model, clips, label_list, device, cap_model=None, threshold=0.5):
     predictions = []
     for timestamp, clip in clips:
-        clip = clip.unsqueeze(0).to(device)  # Add batch dim
+        clip = clip.unsqueeze(0).to(device)
         with torch.no_grad():
             logits = model(clip)
-            probs = torch.sigmoid(logits)[0]  # Remove batch dim
+            probs = torch.sigmoid(logits)[0]
             labels = [label_list[i] for i, p in enumerate(probs) if p > threshold]
+        
+        # Add cap number detection
+        last_frame = clip[0, :, -1].permute(1, 2, 0).detach().cpu().numpy()
+        last_frame = (last_frame * 255).astype("uint8")
+        caps = identify_numbers_in_frame(last_frame, cap_model)
+        print(f"{timestamp:.1f}s: {', '.join(labels)}")
+        print(f"[cap_number] W caps: {caps['W']}, D caps: {caps['D']}")
+
         if labels:
             predictions.append((timestamp, labels))
     return predictions
 
 def run(video_path, model_path, device="cuda" if torch.cuda.is_available() else "cpu"):
     model = load_model(model_path, len(label_list), device)
+    cap_model = load_detector()
     clips = preprocess_video(video_path)
-    predictions = predict_events(model, clips, label_list, device)
-    for timestamp, tags in predictions:
-        print(f"{timestamp:.1f}s: {', '.join(tags)}")
+    predictions = predict_events(model, clips, label_list, device, cap_model)
     return predictions
 
 if __name__ == "__main__":
