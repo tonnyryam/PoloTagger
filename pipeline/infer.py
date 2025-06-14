@@ -4,9 +4,10 @@ from torchvision.models.video import r3d_18
 import torchvision.transforms as T
 import cv2
 import numpy as np
-
-# Import cap number feature
 from features.cap_number.identifier import identify_numbers_in_frame, load_detector
+from preprocess import parse_sportscode_xml
+from evaluate_predictions import compute_metrics
+from export_predictions_to_xml import export_predictions_to_xml
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -28,7 +29,6 @@ def preprocess_video(video_path, clip_len=5, fps=30, stride=2.5, transform=None)
     cap = cv2.VideoCapture(video_path)
     original_fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / original_fps
     transform = transform or T.Compose([
         T.ToPILImage(),
         T.Resize((224, 224)),
@@ -62,8 +62,7 @@ def predict_events(model, clips, label_list, device, cap_model=None, threshold=0
             logits = model(clip)
             probs = torch.sigmoid(logits)[0]
             labels = [label_list[i] for i, p in enumerate(probs) if p > threshold]
-        
-        # Add cap number detection
+
         last_frame = clip[0, :, -1].permute(1, 2, 0).detach().cpu().numpy()
         last_frame = (last_frame * 255).astype("uint8")
         caps = identify_numbers_in_frame(last_frame, cap_model)
@@ -74,16 +73,26 @@ def predict_events(model, clips, label_list, device, cap_model=None, threshold=0
             predictions.append((timestamp, labels))
     return predictions
 
-def run(video_path, model_path, device="cuda" if torch.cuda.is_available() else "cpu"):
+def run(video_path, model_path, ground_truth_path=None, device="cuda" if torch.cuda.is_available() else "cpu"):
     model = load_model(model_path, len(label_list), device)
     cap_model = load_detector()
     clips = preprocess_video(video_path)
     predictions = predict_events(model, clips, label_list, device, cap_model)
-    return predictions
+
+    if ground_truth_path:
+        ground_truth = parse_sportscode_xml(ground_truth_path)
+        metrics = compute_metrics(predictions, ground_truth, label_list)
+        print("\\nEVALUATION METRICS:")
+        print("Precision:", metrics["precision"])
+        print("Recall:", metrics["recall"])
+        print("F1 Score:", metrics["f1"])
+
+    export_predictions_to_xml(predictions, "hudl_tags.xml")
+    print("Exported HUDL-compatible tags to hudl_tags.xml")
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("Usage: python infer.py <video_path> <model_path>")
+        print("Usage: python infer.py <video_path> <model_path> [<ground_truth_xml>]")
     else:
-        run(sys.argv[1], sys.argv[2])
+        run(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
