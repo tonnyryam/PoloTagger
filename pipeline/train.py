@@ -3,10 +3,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18
-from pipeline.dataset import VideoClipDataset
-
-import importlib.util
 import os
+import importlib.util
+from pipeline.dataset import VideoClipDataset
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -16,19 +15,19 @@ label_list = [
     "D AG", "D FCO", "W Time Out"
 ]
 
-def load_feature_trainers(features_dir="features"):
+def load_feature_trainers(features_folder):
     trainers = []
-    for feature_name in os.listdir(features_dir):
-        path = os.path.join(features_dir, feature_name, "train.py")
-        if os.path.isfile(path):
-            spec = importlib.util.spec_from_file_location("train_" + feature_name, path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            if hasattr(mod, "add_feature_training"):
-                trainers.append(mod.add_feature_training)
+    for root, dirs, files in os.walk(features_folder):
+        if "train.py" in files:
+            train_path = os.path.join(root, "train.py")
+            spec = importlib.util.spec_from_file_location("train", train_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            if hasattr(module, "add_feature_training"):
+                trainers.append(module.add_feature_training)
     return trainers
 
-def train_model(model, dataloader, criterion, optimizer, device, feature_trainers, num_epochs=5):
+def train_model(model, dataloader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=5):
     model.train()
     for epoch in range(num_epochs):
         total_loss = 0
@@ -39,14 +38,18 @@ def train_model(model, dataloader, criterion, optimizer, device, feature_trainer
             outputs = model(clips)
             loss = criterion(outputs, labels)
 
+            total_feature_penalty = 0
+            for trainer in feature_trainers:
+                penalty = trainer(model, clips, labels, label_list)
+                total_feature_penalty += penalty
+
+            total_loss_val = loss + total_feature_penalty
+
             optimizer.zero_grad()
-            loss.backward()
+            total_loss_val.backward()
             optimizer.step()
 
-            for trainer in feature_trainers:
-                trainer(model, clips, labels)
-
-            total_loss += loss.item()
+            total_loss += total_loss_val.item()
 
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
@@ -66,7 +69,7 @@ def main():
 
     feature_trainers = load_feature_trainers("features")
 
-    train_model(model, dataloader, criterion, optimizer, device, feature_trainers, num_epochs=5)
+    train_model(model, dataloader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=5)
 
     torch.save(model.state_dict(), "models/r3d_18.pth")
 
