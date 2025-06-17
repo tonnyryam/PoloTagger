@@ -8,6 +8,7 @@ from features.cap_number.identifier import identify_numbers_in_frame, load_detec
 from preprocess import parse_sportscode_xml
 from export_predictions_to_xml import export_predictions_to_xml
 import xml.etree.ElementTree as ET
+from sklearn.metrics import precision_score, recall_score, f1_score, multilabel_confusion_matrix
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",

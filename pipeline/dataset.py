@@ -1,65 +1,81 @@
+import os
 import torch
-from torch.utils.data import Dataset
-import torchvision.transforms as T
+from torch.utils.data import Dataset, Subset
+import torchvision.transforms as transforms
 import pandas as pd
-import numpy as np
 import cv2
+import numpy as np
+from sklearn.model_selection import train_test_split
 
 class VideoClipDataset(Dataset):
-    def __init__(self, metadata_csv, label_list, clip_len=5, fps=30, transform=None, permute=True):
+    def __init__(self, metadata_csv, label_list, clip_len=5, fps=30, transform=None):
         self.metadata = pd.read_csv(metadata_csv)
         self.label_list = label_list
-        self.label_to_idx = {label: idx for idx, label in enumerate(label_list)}
         self.clip_len = clip_len
         self.fps = fps
-        self.num_frames = int(clip_len * fps)
-        self.permute = permute
-        self.transform = transform if transform else T.Compose([
-            T.ToPILImage(),
-            T.Resize((224, 224)),
-            T.ToTensor()
-        ])
+        self.transform = transform
 
     def __len__(self):
         return len(self.metadata)
 
     def __getitem__(self, idx):
         row = self.metadata.iloc[idx]
-        clip_path = row['clip_path']
-        label_str = row['labels']
+        video_path = row["video_path"]
+        start_time = float(row["start_time"])
+        label_vector = self._get_label_vector(row["labels"])
 
-        frames = self.load_video_frames(clip_path)
+        frames = self._load_clip(video_path, start_time)
 
-        label_vector = torch.zeros(len(self.label_list))
-        for label in str(label_str).split(";"):
-            label = label.strip()
-            if label in self.label_to_idx:
-                label_vector[self.label_to_idx[label]] = 1
+        if self.transform:
+            frames = self.transform(frames)
 
-        if self.permute:
-            frames = frames.permute(1, 0, 2, 3)  # [C, T, H, W]
+        clip_tensor = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0  # (C, T, H, W)
+        label_tensor = torch.tensor(label_vector, dtype=torch.float32)
 
-        return frames, label_vector
+        return clip_tensor, label_tensor
 
-    def load_video_frames(self, video_path):
+    def _load_clip(self, video_path, start_time):
         cap = cv2.VideoCapture(video_path)
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_idxs = np.linspace(0, total - 1, self.num_frames).astype(int)
+        start_frame = int(start_time * self.fps)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
         frames = []
-        i = 0
-        while True:
+        for _ in range(self.clip_len * self.fps):
             ret, frame = cap.read()
             if not ret:
                 break
-            if i in frame_idxs:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = self.transform(frame)
-                frames.append(frame)
-            i += 1
+            frame = cv2.resize(frame, (112, 112))
+            frames.append(frame)
+
         cap.release()
 
-        while len(frames) < self.num_frames:
-            frames.append(frames[-1])
+        if len(frames) < self.clip_len * self.fps:
+            pad = self.clip_len * self.fps - len(frames)
+            frames.extend([frames[-1]] * pad)
 
-        return torch.stack(frames)  # [T, C, H, W]
+        return np.stack(frames, axis=0)
+
+    def _get_label_vector(self, label_str):
+        label_vector = [0] * len(self.label_list)
+        for label in label_str.split(","):
+            label = label.strip()
+            if label in self.label_list:
+                label_vector[self.label_list.index(label)] = 1
+        return label_vector
+
+def load_train_val_datasets(metadata_csv, label_list, val_ratio=0.2, clip_len=5, fps=30, transform=None, seed=42):
+    """
+    Splits the dataset into train and validation sets using scikit-learn.
+    Returns Subset-wrapped VideoClipDatasets.
+    """
+    full_metadata = pd.read_csv(metadata_csv)
+    indices = list(range(len(full_metadata)))
+
+    train_idx, val_idx = train_test_split(indices, test_size=val_ratio, random_state=seed, shuffle=True)
+
+    full_dataset = VideoClipDataset(metadata_csv, label_list, clip_len=clip_len, fps=fps, transform=transform)
+
+    train_dataset = Subset(full_dataset, train_idx)
+    val_dataset = Subset(full_dataset, val_idx)
+
+    return train_dataset, val_dataset

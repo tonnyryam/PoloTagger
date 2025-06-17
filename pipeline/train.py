@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18
 import os
 import importlib.util
-from pipeline.dataset import VideoClipDataset
+from pipeline.dataset import load_train_val_datasets  # use split-aware loader
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -27,38 +27,53 @@ def load_feature_trainers(features_folder):
                 trainers.append(module.add_feature_training)
     return trainers
 
-def train_model(model, dataloader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=5):
+def train_model(model, train_loader, val_loader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=5):
     model.train()
     for epoch in range(num_epochs):
-        total_loss = 0
-        for clips, labels in dataloader:
-            clips = clips.to(device)
-            labels = labels.to(device)
-
+        total_train_loss = 0
+        for clips, labels in train_loader:
+            clips, labels = clips.to(device), labels.to(device)
             outputs = model(clips)
             loss = criterion(outputs, labels)
 
+            # Feature-specific training penalties
             total_feature_penalty = 0
             for trainer in feature_trainers:
                 penalty = trainer(model, clips, labels, label_list)
                 total_feature_penalty += penalty
 
-            total_loss_val = loss + total_feature_penalty
+            total_loss = loss + total_feature_penalty
 
             optimizer.zero_grad()
-            total_loss_val.backward()
+            total_loss.backward()
             optimizer.step()
 
-            total_loss += total_loss_val.item()
+            total_train_loss += total_loss.item()
 
-        avg_loss = total_loss / len(dataloader)
-        print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
+        avg_train_loss = total_train_loss / len(train_loader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] Train Loss: {avg_train_loss:.4f}")
+
+        # Validation loop
+        model.eval()
+        total_val_loss = 0
+        with torch.no_grad():
+            for clips, labels in val_loader:
+                clips, labels = clips.to(device), labels.to(device)
+                outputs = model(clips)
+                loss = criterion(outputs, labels)
+                total_val_loss += loss.item()
+        avg_val_loss = total_val_loss / len(val_loader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] Val Loss: {avg_val_loss:.4f}")
+        model.train()
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = VideoClipDataset("data/metadata/clip_index.csv", label_list)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+    train_dataset, val_dataset = load_train_val_datasets(
+        "data/metadata/clip_index.csv", label_list, val_ratio=0.2
+    )
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
 
     model = r3d_18(pretrained=True)
     model.fc = nn.Linear(model.fc.in_features, len(label_list))
@@ -69,7 +84,7 @@ def main():
 
     feature_trainers = load_feature_trainers("features")
 
-    train_model(model, dataloader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=5)
+    train_model(model, train_loader, val_loader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=5)
 
     torch.save(model.state_dict(), "models/r3d_18.pth")
 
