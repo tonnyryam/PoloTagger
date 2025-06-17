@@ -6,8 +6,8 @@ import cv2
 import numpy as np
 from features.cap_number.identifier import identify_numbers_in_frame, load_detector
 from preprocess import parse_sportscode_xml
-from evaluate_predictions import compute_metrics
 from export_predictions_to_xml import export_predictions_to_xml
+import xml.etree.ElementTree as ET
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -16,6 +16,89 @@ label_list = [
     "D DEXC", "D 6/5", "W 5/6", "D Penalty", "W Penalty", "W Goals",
     "D AG", "D FCO", "W Time Out"
 ]
+
+def export_predictions_to_xml(predictions, output_file="hudl_tags.xml", duration=5.0):
+    """
+    predictions: list of (timestamp, [labels], cap_numbers) tuples
+    """
+    root = ET.Element("Tags")
+
+    for timestamp, labels, cap_numbers in predictions:
+        for label in labels:
+            event = ET.SubElement(root, "Event")
+            start = ET.SubElement(event, "Start")
+            end = ET.SubElement(event, "End")
+            tag = ET.SubElement(event, "Label")
+
+            start.text = f"{timestamp:.2f}"
+            end.text = f"{(timestamp + duration):.2f}"
+            tag.text = label
+
+            if cap_numbers:
+                caps = ET.SubElement(event, "Caps")
+                w_team = ET.SubElement(caps, "W")
+                d_team = ET.SubElement(caps, "D")
+                w_team.text = ", ".join(str(c) for c in cap_numbers.get("W", []))
+                d_team.text = ", ".join(str(c) for c in cap_numbers.get("D", []))
+
+    tree = ET.ElementTree(root)
+    tree.write(output_file, encoding="utf-8", xml_declaration=True)
+    print(f"Saved XML with cap numbers to {output_file}")
+
+def compute_metrics(predictions, ground_truth, label_list, time_tolerance=2.0):
+    """
+    predictions: [(timestamp, [label, ...]), ...]
+    ground_truth: [(timestamp, [label, ...]), ...]
+    """
+    num_labels = len(label_list)
+    label_to_idx = {label: i for i, label in enumerate(label_list)}
+
+    def binarize(events):
+        bin_vector = [0] * num_labels
+        for label in events:
+            if label in label_to_idx:
+                bin_vector[label_to_idx[label]] = 1
+        return bin_vector
+
+    # Match predictions to ground truth clips using time tolerance
+    y_true = []
+    y_pred = []
+
+    gt_used = set()
+    for pt, pred_labels in predictions:
+        best_match = None
+        for i, (gt_time, gt_labels) in enumerate(ground_truth):
+            if i in gt_used:
+                continue
+            if abs(gt_time - pt) <= time_tolerance:
+                best_match = i
+                break
+
+        if best_match is not None:
+            y_true.append(binarize(ground_truth[best_match][1]))
+            gt_used.add(best_match)
+        else:
+            y_true.append([0] * num_labels)
+
+        y_pred.append(binarize(pred_labels))
+
+    # Add unused ground truth as false negatives
+    for i, (gt_time, gt_labels) in enumerate(ground_truth):
+        if i not in gt_used:
+            y_true.append(binarize(gt_labels))
+            y_pred.append([0] * num_labels)
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+
+    metrics = {
+        "precision": precision_score(y_true, y_pred, average="macro", zero_division=0),
+        "recall": recall_score(y_true, y_pred, average="macro", zero_division=0),
+        "f1": f1_score(y_true, y_pred, average="macro", zero_division=0),
+        "confusion_matrix": multilabel_confusion_matrix(y_true, y_pred)
+    }
+
+    return metrics
 
 def load_model(model_path, num_classes, device):
     model = r3d_18(pretrained=False)
@@ -70,7 +153,7 @@ def predict_events(model, clips, label_list, device, cap_model=None, threshold=0
         print(f"[cap_number] W caps: {caps['W']}, D caps: {caps['D']}")
 
         if labels:
-            predictions.append((timestamp, labels))
+            predictions.append((timestamp, labels, caps))
     return predictions
 
 def run(video_path, model_path, ground_truth_path=None, device="cuda" if torch.cuda.is_available() else "cpu"):
