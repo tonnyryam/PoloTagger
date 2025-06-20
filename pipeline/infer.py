@@ -1,14 +1,12 @@
+import argparse
+import os
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
+from sklearn.metrics import classification_report
+from pipeline.dataset import VideoClipDataset
 from torchvision.models.video import r3d_18
-import torchvision.transforms as T
-import cv2
-import numpy as np
-from features.cap_number.identifier import identify_numbers_in_frame, load_detector
-from preprocess import parse_sportscode_xml
-from export_predictions_to_xml import export_predictions_to_xml
-import xml.etree.ElementTree as ET
-from sklearn.metrics import precision_score, recall_score, f1_score, multilabel_confusion_matrix
+from evaluate_predictions import export_to_xml
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -18,165 +16,57 @@ label_list = [
     "D AG", "D FCO", "W Time Out"
 ]
 
-def export_predictions_to_xml(predictions, output_file="hudl_tags.xml", duration=5.0):
-    """
-    predictions: list of (timestamp, [labels], cap_numbers) tuples
-    """
-    root = ET.Element("Tags")
+def sigmoid(x):
+    return 1 / (1 + torch.exp(-x))
 
-    for timestamp, labels, cap_numbers in predictions:
-        for label in labels:
-            event = ET.SubElement(root, "Event")
-            start = ET.SubElement(event, "Start")
-            end = ET.SubElement(event, "End")
-            tag = ET.SubElement(event, "Label")
-
-            start.text = f"{timestamp:.2f}"
-            end.text = f"{(timestamp + duration):.2f}"
-            tag.text = label
-
-            if cap_numbers:
-                caps = ET.SubElement(event, "Caps")
-                w_team = ET.SubElement(caps, "W")
-                d_team = ET.SubElement(caps, "D")
-                w_team.text = ", ".join(str(c) for c in cap_numbers.get("W", []))
-                d_team.text = ", ".join(str(c) for c in cap_numbers.get("D", []))
-
-    tree = ET.ElementTree(root)
-    tree.write(output_file, encoding="utf-8", xml_declaration=True)
-    print(f"Saved XML with cap numbers to {output_file}")
-
-def compute_metrics(predictions, ground_truth, label_list, time_tolerance=2.0):
-    """
-    predictions: [(timestamp, [label, ...]), ...]
-    ground_truth: [(timestamp, [label, ...]), ...]
-    """
-    num_labels = len(label_list)
-    label_to_idx = {label: i for i, label in enumerate(label_list)}
-
-    def binarize(events):
-        bin_vector = [0] * num_labels
-        for label in events:
-            if label in label_to_idx:
-                bin_vector[label_to_idx[label]] = 1
-        return bin_vector
-
-    # Match predictions to ground truth clips using time tolerance
-    y_true = []
-    y_pred = []
-
-    gt_used = set()
-    for pt, pred_labels in predictions:
-        best_match = None
-        for i, (gt_time, gt_labels) in enumerate(ground_truth):
-            if i in gt_used:
-                continue
-            if abs(gt_time - pt) <= time_tolerance:
-                best_match = i
-                break
-
-        if best_match is not None:
-            y_true.append(binarize(ground_truth[best_match][1]))
-            gt_used.add(best_match)
-        else:
-            y_true.append([0] * num_labels)
-
-        y_pred.append(binarize(pred_labels))
-
-    # Add unused ground truth as false negatives
-    for i, (gt_time, gt_labels) in enumerate(ground_truth):
-        if i not in gt_used:
-            y_true.append(binarize(gt_labels))
-            y_pred.append([0] * num_labels)
-
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-
-    metrics = {
-        "precision": precision_score(y_true, y_pred, average="macro", zero_division=0),
-        "recall": recall_score(y_true, y_pred, average="macro", zero_division=0),
-        "f1": f1_score(y_true, y_pred, average="macro", zero_division=0),
-        "confusion_matrix": multilabel_confusion_matrix(y_true, y_pred)
-    }
-
-    return metrics
-
-def load_model(model_path, num_classes, device):
-    model = r3d_18(pretrained=False)
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model = model.to(device)
+def evaluate_model(model, dataloader, device, threshold=0.5):
     model.eval()
-    return model
+    all_preds = []
+    all_labels = []
+    all_paths = []
 
-def preprocess_video(video_path, clip_len=5, fps=30, stride=2.5, transform=None):
-    cap = cv2.VideoCapture(video_path)
-    original_fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    transform = transform or T.Compose([
-        T.ToPILImage(),
-        T.Resize((224, 224)),
-        T.ToTensor()
-    ])
-    clip_frames = int(clip_len * fps)
-    step_frames = int(stride * fps)
+    with torch.no_grad():
+        for clips, labels, paths in dataloader:
+            clips = clips.to(device)
+            outputs = model(clips)
+            probs = sigmoid(outputs).cpu()
+            preds = (probs > threshold).int()
 
-    clips = []
-    for start_f in range(0, total_frames - clip_frames + 1, step_frames):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
-        frames = []
-        for _ in range(clip_frames):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = transform(frame)
-            frames.append(frame)
-        if len(frames) == clip_frames:
-            clip_tensor = torch.stack(frames).permute(1, 0, 2, 3)  # [C, T, H, W]
-            clips.append((start_f / original_fps, clip_tensor))
-    cap.release()
-    return clips
+            all_preds.extend(preds.tolist())
+            all_labels.extend(labels.tolist())
+            all_paths.extend(paths)
 
-def predict_events(model, clips, label_list, device, cap_model=None, threshold=0.5):
-    predictions = []
-    for timestamp, clip in clips:
-        clip = clip.unsqueeze(0).to(device)
-        with torch.no_grad():
-            logits = model(clip)
-            probs = torch.sigmoid(logits)[0]
-            labels = [label_list[i] for i, p in enumerate(probs) if p > threshold]
+    return all_preds, all_labels, all_paths
 
-        last_frame = clip[0, :, -1].permute(1, 2, 0).detach().cpu().numpy()
-        last_frame = (last_frame * 255).astype("uint8")
-        caps = identify_numbers_in_frame(last_frame, cap_model)
-        print(f"{timestamp:.1f}s: {', '.join(labels)}")
-        print(f"[cap_number] W caps: {caps['W']}, D caps: {caps['D']}")
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", required=True, help="Path to clip_index.csv")
+    parser.add_argument("--clips", required=True, help="Path to folder with video clips")
+    parser.add_argument("--model", required=True, help="Path to trained model checkpoint")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Classification threshold for multilabel outputs")
+    parser.add_argument("--export_xml", help="Optional path to save HUDL-compatible XML file")
+    args = parser.parse_args()
 
-        if labels:
-            predictions.append((timestamp, labels, caps))
-    return predictions
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def run(video_path, model_path, ground_truth_path=None, device="cuda" if torch.cuda.is_available() else "cpu"):
-    model = load_model(model_path, len(label_list), device)
-    cap_model = load_detector()
-    clips = preprocess_video(video_path)
-    predictions = predict_events(model, clips, label_list, device, cap_model)
+    dataset = VideoClipDataset(args.csv, label_list)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
-    if ground_truth_path:
-        ground_truth = parse_sportscode_xml(ground_truth_path)
-        metrics = compute_metrics(predictions, ground_truth, label_list)
-        print("\\nEVALUATION METRICS:")
-        print("Precision:", metrics["precision"])
-        print("Recall:", metrics["recall"])
-        print("F1 Score:", metrics["f1"])
+    model = r3d_18(pretrained=False)
+    model.fc = nn.Linear(model.fc.in_features, len(label_list))
+    model.load_state_dict(torch.load(args.model))
+    model.to(device)
 
-    export_predictions_to_xml(predictions, "hudl_tags.xml")
-    print("Exported HUDL-compatible tags to hudl_tags.xml")
+    print("Running inference...")
+    preds, labels, paths = evaluate_model(model, dataloader, device, args.threshold)
+
+    print("\n=== Classification Report ===")
+    print(classification_report(labels, preds, target_names=label_list, zero_division=0))
+
+    if args.export_xml:
+        print(f"Exporting predictions to XML: {args.export_xml}")
+        export_to_xml(preds, paths, label_list, args.export_xml)
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 3:
-        print("Usage: python infer.py <video_path> <model_path> [<ground_truth_xml>]")
-    else:
-        run(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    main()

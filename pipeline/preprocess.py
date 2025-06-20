@@ -1,55 +1,88 @@
+import argparse
 import os
-import pandas as pd
 import xml.etree.ElementTree as ET
+import pandas as pd
+import cv2
+from moviepy.editor import VideoFileClip
 
-def parse_sportscode_xml(xml_path):
-    """
-    Parse Sportscode XML file and return a list of (start_time, end_time, label)
-    """
+def extract_clips_from_video(video_path, xml_path, output_dir, clip_len=5, fps=30):
+    os.makedirs(output_dir, exist_ok=True)
+    basename = os.path.splitext(os.path.basename(video_path))[0]
+    metadata = []
+
+    video = cv2.VideoCapture(video_path)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    actual_fps = video.get(cv2.CAP_PROP_FPS)
+    print(f"Loaded video: {basename}, {total_frames} frames @ {actual_fps:.2f} FPS")
+
     tree = ET.parse(xml_path)
     root = tree.getroot()
-    events = []
 
-    for instance in root.iter('Instance'):
-        try:
-            start_time = float(instance.find('Start').text)
-            end_time = float(instance.find('End').text)
-            label = instance.find('Label').text.strip()
-            events.append((start_time, end_time, label))
-        except:
+    for instance in root.findall(".//instance"):
+        label = instance.find("label").text.strip()
+        start_frame = int(instance.find("start_frame").text)
+        end_frame = int(instance.find("end_frame").text)
+
+        # Clip center logic
+        center_frame = (start_frame + end_frame) // 2
+        half_clip = (clip_len * fps) // 2
+        clip_start = max(center_frame - half_clip, 0)
+        clip_end = min(center_frame + half_clip, total_frames - 1)
+
+        video.set(cv2.CAP_PROP_POS_FRAMES, clip_start)
+        frames = []
+        for _ in range(clip_end - clip_start):
+            success, frame = video.read()
+            if not success:
+                break
+            resized = cv2.resize(frame, (224, 224))  # Standard size
+            frames.append(resized)
+
+        if len(frames) < 1:
             continue
-    return events
 
-def build_clip_index(video_path, xml_path, output_dir, clip_len=5):
-    """
-    Build a CSV index of clips and their corresponding labels
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    events = parse_sportscode_xml(xml_path)
-    rows = []
+        clip_filename = f"{label}_{basename}_{clip_start}.mp4"
+        out_path = os.path.join(output_dir, clip_filename)
 
-    for i, (start, end, label) in enumerate(events):
-        # Define a clip file name
-        clip_name = f"{os.path.splitext(os.path.basename(video_path))[0]}_clip_{i:04d}.mp4"
-        clip_path = os.path.join(output_dir, clip_name)
+        height, width, _ = frames[0].shape
+        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+        for f in frames:
+            writer.write(f)
+        writer.release()
 
-        # Use ffmpeg to extract the clip
-        cmd = f"ffmpeg -ss {start:.2f} -i '{video_path}' -t {clip_len} -c:v libx264 -an '{clip_path}' -y"
-        os.system(cmd)
+        metadata.append({
+            "clip_path": out_path,
+            "label": label,
+            "start_frame": clip_start,
+            "end_frame": clip_end,
+            "source_video": video_path
+        })
 
-        rows.append({"clip_path": clip_path, "labels": label})
-
-    return pd.DataFrame(rows)
+    video.release()
+    return metadata
 
 def main():
-    video_path = "data/raw/game1.mp4"
-    xml_path = "data/raw/game1.xml"
-    output_dir = "data/clips"
-    output_csv = "data/metadata/clip_index.csv"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--video", required=True, help="Path to input .mp4 video file")
+    parser.add_argument("--xml", required=True, help="Path to Sportscode XML tag file")
+    parser.add_argument("--out_dir", default="data/clips", help="Where to store extracted clips")
+    parser.add_argument("--metadata_csv", default="data/metadata/clip_index.csv", help="Where to save the metadata CSV")
+    parser.add_argument("--clip_len", type=int, default=5, help="Clip length in seconds")
+    parser.add_argument("--fps", type=int, default=30, help="Frames per second for extraction")
+    args = parser.parse_args()
 
-    df = build_clip_index(video_path, xml_path, output_dir, clip_len=5)
-    df.to_csv(output_csv, index=False)
-    print(f"✅ Saved clip index to {output_csv}")
+    os.makedirs(os.path.dirname(args.metadata_csv), exist_ok=True)
+    metadata = extract_clips_from_video(
+        video_path=args.video,
+        xml_path=args.xml,
+        output_dir=args.out_dir,
+        clip_len=args.clip_len,
+        fps=args.fps
+    )
+
+    df = pd.DataFrame(metadata)
+    df.to_csv(args.metadata_csv, index=False)
+    print(f"Saved metadata to {args.metadata_csv}")
 
 if __name__ == "__main__":
     main()
