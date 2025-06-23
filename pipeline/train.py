@@ -7,6 +7,7 @@ from torchvision.models.video import r3d_18
 import os
 import importlib.util
 from pipeline.dataset import load_train_val_datasets
+from features.cap_number.identifier import load_detector  # NEW: load the cap number detector
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -71,26 +72,38 @@ def main():
     parser.add_argument("--out", default="models/r3d_18_final.pth", help="Where to save the trained model")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--yolo_model", default="best_yolo_cap_model.pt", help="Path to YOLOv8 model for cap detection")  # NEW
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
+    # Load cap number detector globally for identifier module
+    load_detector(args.yolo_model)
+
+    # Load datasets
     train_ds, val_ds = load_train_val_datasets(args.csv, label_list, val_ratio=0.2)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=8, pin_memory=True)
 
+    # Define model
     model = r3d_18(pretrained=True)
     model.fc = nn.Linear(model.fc.in_features, len(label_list))
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model = model.to(device)
 
+    # Loss and optimizer
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.BCEWithLogitsLoss()
+
+    # Load feature trainers (e.g., cap number logic)
     feature_trainers = load_feature_trainers(args.features)
 
+    # Train model
     train_model(model, train_loader, val_loader, criterion, optimizer, device, feature_trainers, label_list, num_epochs=args.epochs)
+
+    # Save model
     torch.save(model.state_dict(), args.out)
     print(f"Model saved to {args.out}")
 
