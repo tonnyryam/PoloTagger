@@ -7,7 +7,7 @@ from torchvision.models.video import r3d_18
 import os
 import importlib.util
 from pipeline.dataset import load_train_val_datasets
-from features.cap_number.identifier import load_detector  # NEW: load the cap number detector
+from features.cap_number.identifier import load_detector  # Updated to handle both models
 
 label_list = [
     "W Possession", "W Turn Over", "D Possession", "D CA", "D Turn Over",
@@ -72,14 +72,15 @@ def main():
     parser.add_argument("--out", default="models/r3d_18_final.pth", help="Where to save the trained model")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
-    parser.add_argument("--yolo_model", default="best_yolo_cap_model.pt", help="Path to YOLOv8 model for cap detection")  # NEW
+    parser.add_argument("--yolo_model", default="best_yolo_cap_model.pt", help="Path to YOLOv8 model for cap detection")
+    parser.add_argument("--digit_model", default="digit_classifier.pth", help="Path to trained digit classifier model")  # NEW
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
-    # Load cap number detector globally for identifier module
-    load_detector(args.yolo_model)
+    # Load both YOLO + digit classifier
+    load_detector(args.yolo_model, digit_model_path=args.digit_model)
 
     # Load datasets
     train_ds, val_ds = load_train_val_datasets(args.csv, label_list, val_ratio=0.2)

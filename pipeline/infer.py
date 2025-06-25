@@ -36,7 +36,6 @@ def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
             all_preds.extend(preds.tolist())
             all_labels.extend(labels.tolist())
 
-            # Dummy paths if not available — placeholder
             all_paths.extend(["clip_{}.mp4".format(i) for i in range(len(clips))])
 
             if show_caps:
@@ -51,25 +50,25 @@ def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True, help="Path to clip_index.csv")
-    parser.add_argument("--clips", required=False, help="Path to folder with video clips (unused)")
     parser.add_argument("--model", required=True, help="Path to trained model checkpoint")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
     parser.add_argument("--threshold", type=float, default=0.5, help="Classification threshold for multilabel outputs")
     parser.add_argument("--export_xml", help="Optional path to save HUDL-compatible XML file")
     parser.add_argument("--yolo_model", default="best_yolo_cap_model.pt", help="Path to YOLOv8 model for cap detection")
+    parser.add_argument("--digit_model", default="digit_classifier.pth", help="Path to digit classifier model")  # NEW
     parser.add_argument("--show_caps", action="store_true", help="Print cap numbers for each clip during inference")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load cap number detection model
-    load_detector(args.yolo_model)
+    # Load cap number detection and digit classifier models
+    load_detector(args.yolo_model, digit_model_path=args.digit_model)
 
     # Load dataset
     dataset = VideoClipDataset(args.csv, label_list)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
-    # Load model
+    # Load classification model
     model = r3d_18(pretrained=False)
     model.fc = nn.Linear(model.fc.in_features, len(label_list))
     model.load_state_dict(torch.load(args.model, map_location=device))
