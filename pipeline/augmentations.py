@@ -1,26 +1,26 @@
 import torchvision.transforms as T
 import random
 import torch
+from PIL import Image
 
 class VideoAugmentation:
     def __init__(self):
-        self.spatial = T.RandomApply([
-            T.RandomHorizontalFlip(p=1.0),
-            T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2)
-        ], p=0.7)
-
-        self.normalize = T.Normalize(mean=[0.45], std=[0.225])  # or adapt to 3-channel if needed
+        self.frame_aug = T.Compose([
+            T.RandomHorizontalFlip(p=0.5),
+            T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            T.RandomApply([T.GaussianBlur(kernel_size=3)], p=0.3),
+            T.RandomRotation(degrees=10)
+        ])
+        self.normalize = T.Normalize(mean=[0.5], std=[0.5])
 
     def __call__(self, clip):
-        # clip shape: (C, T, H, W) → apply transforms per-frame
+        # clip shape: (C, T, H, W)
         frames = []
         for t in range(clip.shape[1]):
-            frame = clip[:, t, :, :]  # shape (C, H, W)
+            frame = clip[:, t, :, :]
             frame = T.ToPILImage()(frame.cpu())
-            frame = self.spatial(frame)
+            frame = self.frame_aug(frame)
             frame = T.ToTensor()(frame)
             frame = self.normalize(frame)
             frames.append(frame)
-
-        augmented = torch.stack(frames, dim=1)  # (C, T, H, W)
-        return augmented
+        return torch.stack(frames, dim=1)

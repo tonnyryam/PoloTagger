@@ -23,6 +23,7 @@ def sigmoid(x):
 def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
     model.eval()
     all_preds = []
+    all_probs = []
     all_labels = []
     clip_infos = []
 
@@ -34,6 +35,7 @@ def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
             preds = (probs > threshold).int()
 
             all_preds.extend(preds.tolist())
+            all_probs.extend(probs.tolist())
             all_labels.extend(labels.tolist())
 
             for j in range(len(clips)):
@@ -51,11 +53,11 @@ def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
                     caps = identify_numbers_in_frame(frame)
                     print(f"Clip {j} Caps Detected: {caps}")
 
-    return all_preds, all_labels, clip_infos
+    return all_preds, all_probs, all_labels, clip_infos
 
-def export_to_xml(preds, clip_infos, label_list, output_path):
+def export_to_xml(preds, probs, clip_infos, label_list, output_path):
     annotations = Element("annotations")
-    for pred, info in zip(preds, clip_infos):
+    for pred, prob, info in zip(preds, probs, clip_infos):
         for label_idx, value in enumerate(pred):
             if value == 1:
                 instance = SubElement(annotations, "instance")
@@ -63,6 +65,7 @@ def export_to_xml(preds, clip_infos, label_list, output_path):
                 SubElement(instance, "end_frame").text = str(info["end"])
                 SubElement(instance, "label").text = label_list[label_idx]
                 SubElement(instance, "source_video").text = info["video"]
+                SubElement(instance, "confidence").text = f"{float(prob[label_idx]):.4f}"
     tree = ElementTree(annotations)
     tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
@@ -91,14 +94,14 @@ def main():
     model.to(device)
 
     print("Running inference...")
-    preds, labels, clip_infos = evaluate_model(model, dataloader, device, args.threshold, show_caps=args.show_caps)
+    preds, probs, labels, clip_infos = evaluate_model(model, dataloader, device, args.threshold, show_caps=args.show_caps)
 
     print("\n=== Classification Report ===")
     print(classification_report(labels, preds, target_names=label_list, zero_division=0))
 
     if args.export_xml:
         print(f"Exporting predictions to XML: {args.export_xml}")
-        export_to_xml(preds, clip_infos, label_list, args.export_xml)
+        export_to_xml(preds, probs, clip_infos, label_list, args.export_xml)
 
 if __name__ == "__main__":
     main()
