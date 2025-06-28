@@ -1,40 +1,30 @@
-import torch
-import numpy as np
-import cv2
-from features.cap_number.identifier import identify_numbers_in_frame, load_detector
+from features.cap_number.identifier import identify_numbers_in_frame
 
-# Load detector once when this module is imported
-detector = load_detector("best_yolo_cap_model.pt")  # update with your actual model path if needed
+def extract_tagged_cap_numbers(label_str):
+    # Example: "#5, #7" -> [5, 7]
+    import re
+    return [int(n) for n in re.findall(r"#(\d+)", label_str)]
 
 def add_feature_training(model, clips, labels, label_list):
-    """
-    Apply penalties during training based on cap number presence.
-
-    Args:
-        model: The model being trained (not used here).
-        clips: A batch of video clips (B x C x T x H x W).
-        labels: Corresponding labels for each clip.
-        label_list: List of label names in order.
-
-    Returns:
-        A scalar penalty to add to loss.
-    """
+    idx = label_list.index("W Possession")  # Adjust label as needed
     penalties = []
-    idx = label_list.index("W Possession")  # Only penalize missing white caps during W Possession
 
     for i in range(clips.shape[0]):
-        # Use the last frame of the clip (T-1) to identify caps
-        frame = clips[i, :, -1].permute(1, 2, 0).detach().cpu().numpy()
-        frame = (frame * 255).astype(np.uint8)
+        frame = clips[i, :, -1].permute(1, 2, 0).cpu().numpy()
+        frame = (frame * 255).astype("uint8")
 
-        caps = identify_numbers_in_frame(frame, model=detector)
-        w_caps = caps.get("W", [])
-        d_caps = caps.get("D", [])
+        caps = identify_numbers_in_frame(frame)
+        tag_str = ",".join([label_list[j] for j, v in enumerate(labels[i]) if v == 1])
+        tagged_caps = extract_tagged_cap_numbers(tag_str)
 
-        # Penalize if W Possession label is on, but no white caps detected
-        if labels[i][idx] == 1 and len(w_caps) == 0:
+        brightness_vals = [d["avg_v"] for d in caps["meta"] if d["number"] in tagged_caps]
+        if brightness_vals:
+            avg_brightness = sum(brightness_vals) / len(brightness_vals)
+            inferred_team = "W" if avg_brightness > 128 else "D"
+        else:
+            inferred_team = None
+
+        if inferred_team and labels[i][idx] == 1 and len(caps[inferred_team]) == 0:
             penalties.append(0.3)
 
-    if penalties:
-        return sum(penalties) / len(penalties)
-    return 0.0
+    return sum(penalties) / len(penalties) if penalties else 0.0
