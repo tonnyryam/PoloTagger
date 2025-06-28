@@ -6,6 +6,7 @@ import pandas as pd
 import cv2
 import numpy as np
 from sklearn.model_selection import train_test_split
+from pipeline.augmentations import VideoAugmentation
 
 class VideoClipDataset(Dataset):
     def __init__(self, metadata_csv, label_list, clip_len=5, fps=30, transform=None):
@@ -63,19 +64,16 @@ class VideoClipDataset(Dataset):
                 label_vector[self.label_list.index(label)] = 1
         return label_vector
 
-def load_train_val_datasets(metadata_csv, label_list, val_ratio=0.2, clip_len=5, fps=30, transform=None, seed=42):
-    """
-    Splits the dataset into train and validation sets using scikit-learn.
-    Returns Subset-wrapped VideoClipDatasets.
-    """
-    full_metadata = pd.read_csv(metadata_csv)
-    indices = list(range(len(full_metadata)))
+def load_train_val_datasets(csv_path, label_list, val_ratio=0.2):
+    full_ds = VideoClipDataset(csv_path, label_list)
 
-    train_idx, val_idx = train_test_split(indices, test_size=val_ratio, random_state=seed, shuffle=True)
+    # Split
+    val_len = int(len(full_ds) * val_ratio)
+    train_len = len(full_ds) - val_len
+    train_ds, val_ds = torch.utils.data.random_split(full_ds, [train_len, val_len])
 
-    full_dataset = VideoClipDataset(metadata_csv, label_list, clip_len=clip_len, fps=fps, transform=transform)
+    # Wrap with transform
+    train_ds.dataset.transform = VideoAugmentation()
+    val_ds.dataset.transform = None  # no aug in validation
 
-    train_dataset = Subset(full_dataset, train_idx)
-    val_dataset = Subset(full_dataset, val_idx)
-
-    return train_dataset, val_dataset
+    return train_ds, val_ds
