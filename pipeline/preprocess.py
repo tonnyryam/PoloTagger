@@ -1,88 +1,78 @@
-import argparse
 import os
-import xml.etree.ElementTree as ET
-import pandas as pd
+import argparse
 import cv2
+import pandas as pd
+import xml.etree.ElementTree as ET
 from moviepy.editor import VideoFileClip
 
-def extract_clips_from_video(video_path, xml_path, output_dir, clip_len=5, fps=30):
-    os.makedirs(output_dir, exist_ok=True)
-    basename = os.path.splitext(os.path.basename(video_path))[0]
-    metadata = []
-
-    video = cv2.VideoCapture(video_path)
-    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-    actual_fps = video.get(cv2.CAP_PROP_FPS)
-    print(f"Loaded video: {basename}, {total_frames} frames @ {actual_fps:.2f} FPS")
-
+def parse_xml(xml_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
-
+    clips = []
     for instance in root.findall(".//instance"):
-        label = instance.find("label").text.strip()
-        start_frame = int(instance.find("start_frame").text)
-        end_frame = int(instance.find("end_frame").text)
+        label = instance.find("label").text
+        start = int(instance.find("start_frame").text)
+        end = int(instance.find("end_frame").text)
+        clips.append((label, start, end))
+    return clips
 
-        # Clip center logic
-        center_frame = (start_frame + end_frame) // 2
-        half_clip = (clip_len * fps) // 2
-        clip_start = max(center_frame - half_clip, 0)
-        clip_end = min(center_frame + half_clip, total_frames - 1)
+def extract_clip(video_path, out_path, start_frame, end_frame, fps):
+    clip = VideoFileClip(video_path)
+    start_time = start_frame / fps
+    end_time = end_frame / fps
+    subclip = clip.subclip(start_time, end_time)
+    subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=False, logger=None)
 
-        video.set(cv2.CAP_PROP_POS_FRAMES, clip_start)
-        frames = []
-        for _ in range(clip_end - clip_start):
-            success, frame = video.read()
-            if not success:
-                break
-            resized = cv2.resize(frame, (224, 224))  # Standard size
-            frames.append(resized)
+def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
 
-        if len(frames) < 1:
-            continue
+    existing_videos = set()
+    if os.path.exists(metadata_csv):
+        df_existing = pd.read_csv(metadata_csv)
+        existing_videos = set(df_existing['source_video'].unique())
+        entries = df_existing.to_dict("records")
+    else:
+        entries = []
 
-        clip_filename = f"{label}_{basename}_{clip_start}.mp4"
-        out_path = os.path.join(output_dir, clip_filename)
+    for file in os.listdir(input_dir):
+        if file.endswith(".mp4"):
+            base = os.path.splitext(file)[0]
+            if base in existing_videos:
+                print(f"⏩ Skipping already processed video: {base}")
+                continue
 
-        height, width, _ = frames[0].shape
-        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-        for f in frames:
-            writer.write(f)
-        writer.release()
+            video_path = os.path.join(input_dir, f"{base}.mp4")
+            xml_path = os.path.join(input_dir, f"{base}.xml")
 
-        metadata.append({
-            "clip_path": out_path,
-            "label": label,
-            "start_frame": clip_start,
-            "end_frame": clip_end,
-            "source_video": video_path
-        })
+            if not os.path.exists(xml_path):
+                print(f"⚠️ Skipping {base}: XML file not found.")
+                continue
 
-    video.release()
-    return metadata
+            print(f"📦 Processing: {base}")
+            clips = parse_xml(xml_path)
+            for label, start, end in clips:
+                clip_filename = f"{label}_{base}_{start}.mp4"
+                out_path = os.path.join(out_dir, clip_filename)
+                extract_clip(video_path, out_path, start, end, fps)
+                entries.append({
+                    "clip_path": out_path,
+                    "label": label,
+                    "start_frame": start,
+                    "end_frame": end,
+                    "source_video": base
+                })
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--video", required=True, help="Path to input .mp4 video file")
-    parser.add_argument("--xml", required=True, help="Path to Sportscode XML tag file")
-    parser.add_argument("--out_dir", default="data/clips", help="Where to store extracted clips")
-    parser.add_argument("--metadata_csv", default="data/metadata/clip_index.csv", help="Where to save the metadata CSV")
-    parser.add_argument("--clip_len", type=int, default=5, help="Clip length in seconds")
-    parser.add_argument("--fps", type=int, default=30, help="Frames per second for extraction")
-    args = parser.parse_args()
-
-    os.makedirs(os.path.dirname(args.metadata_csv), exist_ok=True)
-    metadata = extract_clips_from_video(
-        video_path=args.video,
-        xml_path=args.xml,
-        output_dir=args.out_dir,
-        clip_len=args.clip_len,
-        fps=args.fps
-    )
-
-    df = pd.DataFrame(metadata)
-    df.to_csv(args.metadata_csv, index=False)
-    print(f"Saved metadata to {args.metadata_csv}")
+    pd.DataFrame(entries).to_csv(metadata_csv, index=False)
+    print(f"✅ Updated metadata saved to {metadata_csv}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", default="data/raw", help="Folder containing .mp4 and .xml files")
+    parser.add_argument("--out_dir", default="data/clips", help="Where to store extracted clips")
+    parser.add_argument("--metadata_csv", default="data/metadata/clip_index.csv", help="Output metadata file")
+    parser.add_argument("--clip_len", type=int, default=5, help="Clip length (used if splitting instead of tags)")
+    parser.add_argument("--fps", type=int, default=30, help="FPS of video")
+    args = parser.parse_args()
+
+    preprocess_all(args.input_dir, args.out_dir, args.metadata_csv, args.clip_len, args.fps)
