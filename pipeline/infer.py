@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report
+from xml.etree.ElementTree import Element, SubElement, ElementTree
 from pipeline.dataset import VideoClipDataset
 from torchvision.models.video import r3d_18
-from evaluate_predictions import export_to_xml
 from features.cap_number.identifier import load_detector, identify_numbers_in_frame
 
 label_list = [
@@ -24,10 +24,10 @@ def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
     model.eval()
     all_preds = []
     all_labels = []
-    all_paths = []
+    clip_infos = []
 
     with torch.no_grad():
-        for clips, labels in dataloader:
+        for i, (clips, labels) in enumerate(dataloader):
             clips = clips.to(device)
             outputs = model(clips)
             probs = sigmoid(outputs).cpu()
@@ -36,16 +36,35 @@ def evaluate_model(model, dataloader, device, threshold=0.5, show_caps=False):
             all_preds.extend(preds.tolist())
             all_labels.extend(labels.tolist())
 
-            all_paths.extend(["clip_{}.mp4".format(i) for i in range(len(clips))])
+            for j in range(len(clips)):
+                row = dataloader.dataset.metadata.iloc[i * dataloader.batch_size + j]
+                clip_infos.append({
+                    "video": row["source_video"],
+                    "start": int(row["start_frame"]),
+                    "end": int(row["end_frame"]),
+                    "clip_path": row["clip_path"]
+                })
 
-            if show_caps:
-                for i in range(clips.shape[0]):
-                    frame = clips[i, :, -1].permute(1, 2, 0).cpu().numpy()
+                if show_caps:
+                    frame = clips[j, :, -1].permute(1, 2, 0).cpu().numpy()
                     frame = (frame * 255).astype("uint8")
                     caps = identify_numbers_in_frame(frame)
-                    print(f"Clip {i} Caps Detected: {caps}")
+                    print(f"Clip {j} Caps Detected: {caps}")
 
-    return all_preds, all_labels, all_paths
+    return all_preds, all_labels, clip_infos
+
+def export_to_xml(preds, clip_infos, label_list, output_path):
+    annotations = Element("annotations")
+    for pred, info in zip(preds, clip_infos):
+        for label_idx, value in enumerate(pred):
+            if value == 1:
+                instance = SubElement(annotations, "instance")
+                SubElement(instance, "start_frame").text = str(info["start"])
+                SubElement(instance, "end_frame").text = str(info["end"])
+                SubElement(instance, "label").text = label_list[label_idx]
+                SubElement(instance, "source_video").text = info["video"]
+    tree = ElementTree(annotations)
+    tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -55,36 +74,31 @@ def main():
     parser.add_argument("--threshold", type=float, default=0.5, help="Classification threshold for multilabel outputs")
     parser.add_argument("--export_xml", help="Optional path to save HUDL-compatible XML file")
     parser.add_argument("--yolo_model", default="best_yolo_cap_model.pt", help="Path to YOLOv8 model for cap detection")
-    parser.add_argument("--digit_model", default="digit_classifier.pth", help="Path to digit classifier model")  # NEW
+    parser.add_argument("--digit_model", default="digit_classifier.pth", help="Path to digit classifier model")
     parser.add_argument("--show_caps", action="store_true", help="Print cap numbers for each clip during inference")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load cap number detection and digit classifier models
     load_detector(args.yolo_model, digit_model_path=args.digit_model)
 
-    # Load dataset
     dataset = VideoClipDataset(args.csv, label_list)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
-    # Load classification model
     model = r3d_18(pretrained=False)
     model.fc = nn.Linear(model.fc.in_features, len(label_list))
     model.load_state_dict(torch.load(args.model, map_location=device))
     model.to(device)
 
-    # Run inference
     print("Running inference...")
-    preds, labels, paths = evaluate_model(model, dataloader, device, args.threshold, show_caps=args.show_caps)
+    preds, labels, clip_infos = evaluate_model(model, dataloader, device, args.threshold, show_caps=args.show_caps)
 
     print("\n=== Classification Report ===")
     print(classification_report(labels, preds, target_names=label_list, zero_division=0))
 
-    # Export results if needed
     if args.export_xml:
         print(f"Exporting predictions to XML: {args.export_xml}")
-        export_to_xml(preds, paths, label_list, args.export_xml)
+        export_to_xml(preds, clip_infos, label_list, args.export_xml)
 
 if __name__ == "__main__":
     main()
