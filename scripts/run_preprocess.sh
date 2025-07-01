@@ -21,11 +21,11 @@ echo "[INFO] Output clips: $OUT_CLIPS"
 echo "[INFO] Output CSV: $OUT_CSV"
 
 # Run preprocessing
-python "$PROJECT_ROOT/pipeline/preprocess.py" \\
-  --input_dir "$INPUT_DIR" \\
-  --out_dir "$OUT_CLIPS" \\
-  --metadata_csv "$OUT_CSV" \\
-  --clip_len 5 \\
+python "$PROJECT_ROOT/pipeline/preprocess.py" \
+  --input_dir "$INPUT_DIR" \
+  --out_dir "$OUT_CLIPS" \
+  --metadata_csv "$OUT_CSV" \
+  --clip_len 5 \
   --fps 30
 
 # Check if metadata was created
