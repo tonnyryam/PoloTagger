@@ -1,13 +1,21 @@
-# PoloTagger
+# PoloTagger 🎯
 
-### 🐍 Environment Setup (Recommended)
+## Overview
 
-We recommend using [Anaconda](https://www.anaconda.com/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html) for easy environment setup and package management.
+PoloTagger is an end-to-end video analysis pipeline designed to automatically detect key water polo events such as possessions, shots, goals, man-up/man-down situations, and player cap numbers using deep learning models.
 
-Create and activate an environment:
+---
+
+## 🐍 Environment Setup
+
+We recommend using **[Anaconda](https://www.anaconda.com/)** or **[Miniconda](https://docs.conda.io/en/latest/miniconda.html)**:
+
 ```bash
 conda create -n waterpolo-ai python=3.10
 conda activate waterpolo-ai
+
+pip install torch torchvision opencv-python pandas scikit-learn moviepy
+pip install ultralytics  # For YOLOv8 cap detection
 
 Libraries/Frameworks
 
