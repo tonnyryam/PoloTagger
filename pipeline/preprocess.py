@@ -27,7 +27,10 @@ def extract_clip(video_path, out_path, start_frame, end_frame, fps):
         clip = VideoFileClip(video_path)
         print(f"[DEBUG] Video duration: {clip.duration:.2f}s")
         if end_time > clip.duration:
-            print(f"[WARN] Skipping: end_time {end_time:.2f}s exceeds video duration {clip.duration:.2f}s")
+            print(f"[WARN] Trimming end_time {end_time:.2f}s to {clip.duration:.2f}s")
+            end_time = clip.duration
+        if start_time >= end_time:
+            print(f"[ERROR] Invalid clip range: start {start_time:.2f}s >= end {end_time:.2f}s")
             return
         subclip = clip.subclip(start_time, end_time)
         subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=False)
@@ -68,7 +71,13 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
 
             print(f"📦 Processing: {base}")
             clips = parse_xml(xml_path, fps)
+            video_duration = VideoFileClip(video_path).duration
             for label, start, end in clips:
+                start_time = start / fps
+                end_time = end / fps
+                if start_time >= video_duration:
+                    print(f"[WARN] Skipping clip starting at {start_time:.2f}s — beyond video end.")
+                    continue
                 safe_label = label.replace(" ", "_").replace("/", "_")
                 clip_filename = f"{safe_label}_{base}_{start}.mp4"
                 out_path = os.path.join(out_dir, clip_filename)
