@@ -1,4 +1,3 @@
-
 import os
 import argparse
 import cv2
@@ -20,23 +19,38 @@ def parse_xml(xml_path, fps):
     return clips
 
 def extract_clip(video_path, out_path, start_frame, end_frame, fps):
-    clip = VideoFileClip(video_path)
-    start_time = start_frame / fps
-    end_time = end_frame / fps
-    subclip = clip.subclip(start_time, end_time)
-    subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=False, logger=None)
+    try:
+        print(f"[DEBUG] Extracting: {out_path}")
+        start_time = start_frame / fps
+        end_time = end_frame / fps
+        print(f"[DEBUG] Time range: {start_time:.2f}s to {end_time:.2f}s")
+        clip = VideoFileClip(video_path)
+        print(f"[DEBUG] Video duration: {clip.duration:.2f}s")
+        if end_time > clip.duration:
+            print(f"[WARN] Skipping: end_time {end_time:.2f}s exceeds video duration {clip.duration:.2f}s")
+            return
+        subclip = clip.subclip(start_time, end_time)
+        subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=False)
+    except Exception as e:
+        print(f"[ERROR] Failed to extract {out_path}: {e}")
 
 def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
 
+    entries = []
     existing_videos = set()
+
     if os.path.exists(metadata_csv):
-        df_existing = pd.read_csv(metadata_csv)
-        existing_videos = set(df_existing['source_video'].unique())
-        entries = df_existing.to_dict("records")
-    else:
-        entries = []
+        try:
+            df_existing = pd.read_csv(metadata_csv)
+            if not df_existing.empty:
+                existing_videos = set(df_existing['source_video'].unique())
+                entries = df_existing.to_dict("records")
+            else:
+                print(f"[WARN] Existing metadata file is empty: {metadata_csv}")
+        except pd.errors.EmptyDataError:
+            print(f"[WARN] Could not parse metadata CSV (empty or malformed): {metadata_csv}")
 
     for file in os.listdir(input_dir):
         if file.endswith(".mp4"):
