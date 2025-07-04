@@ -19,11 +19,11 @@ echo "[INFO] Output CSV: $OUT_CSV"
 echo "[INFO] Logging to $LOG_FILE"
 
 # Run preprocessing with safe logging of only the Python script output
-python "$PROJECT_ROOT/pipeline/preprocess.py" \\
-  --input_dir "$INPUT_DIR" \\
-  --out_dir "$OUT_CLIPS" \\
-  --metadata_csv "$OUT_CSV" \\
-  --clip_len 5 \\
+python "$PROJECT_ROOT/pipeline/preprocess.py" \
+  --input_dir "$INPUT_DIR" \
+  --out_dir "$OUT_CLIPS" \
+  --metadata_csv "$OUT_CSV" \
+  --clip_len 5 \
   --fps 30 | tee -a "$LOG_FILE"
 
 # Check if metadata was created
