@@ -12,21 +12,19 @@ LOG_FILE="$LOG_DIR/preprocess_$TIMESTAMP.log"
 
 mkdir -p "$OUT_CLIPS" "$(dirname "$OUT_CSV")" "$LOG_DIR"
 
-# Start logging
-exec > >(tee -a "$LOG_FILE") 2>&1
-
 echo "[INFO] Starting preprocessing at $TIMESTAMP"
 echo "[INFO] Input directory: $INPUT_DIR"
 echo "[INFO] Output clips: $OUT_CLIPS"
 echo "[INFO] Output CSV: $OUT_CSV"
+echo "[INFO] Logging to $LOG_FILE"
 
-# Run preprocessing
-python "$PROJECT_ROOT/pipeline/preprocess.py" \
-  --input_dir "$INPUT_DIR" \
-  --out_dir "$OUT_CLIPS" \
-  --metadata_csv "$OUT_CSV" \
-  --clip_len 5 \
-  --fps 30
+# Run preprocessing with safe logging of only the Python script output
+python "$PROJECT_ROOT/pipeline/preprocess.py" \\
+  --input_dir "$INPUT_DIR" \\
+  --out_dir "$OUT_CLIPS" \\
+  --metadata_csv "$OUT_CSV" \\
+  --clip_len 5 \\
+  --fps 30 | tee -a "$LOG_FILE"
 
 # Check if metadata was created
 if [ -f "$OUT_CSV" ]; then
