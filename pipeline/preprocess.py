@@ -9,13 +9,11 @@ def parse_xml(xml_path, fps):
     tree = ET.parse(xml_path)
     root = tree.getroot()
     clips = []
-    for event in root.findall(".//event"):
-        label = event.find("label").text
-        start_time = float(event.find("start").text)
-        end_time = float(event.find("end").text)
-        start_frame = int(start_time * fps)
-        end_frame = int(end_time * fps)
-        clips.append((label, start_frame, end_frame))
+    for instance in root.findall(".//instance"):
+        label = instance.find("label").text
+        start = int(instance.find("start_frame").text)
+        end = int(instance.find("end_frame").text)
+        clips.append((label, start, end))
     return clips
 
 def extract_clip(video_path, out_path, start_frame, end_frame, fps):
