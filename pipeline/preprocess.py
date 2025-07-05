@@ -41,7 +41,9 @@ def extract_clip(video_path, out_path, start_frame, end_frame, fps):
         print(f"[DEBUG] Extracting: {out_path}")
         start_time = start_frame / fps
         end_time = end_frame / fps
+        print(f"[DEBUG] Time range: {start_time:.2f}s to {end_time:.2f}s")
         clip = VideoFileClip(video_path)
+        print(f"[DEBUG] Video duration: {clip.duration:.2f}s")
         if end_time > clip.duration:
             print(f"[WARN] Trimming end_time {end_time:.2f}s to {clip.duration:.2f}s")
             end_time = clip.duration
@@ -49,9 +51,9 @@ def extract_clip(video_path, out_path, start_frame, end_frame, fps):
             print(f"[ERROR] Invalid clip range: start {start_time:.2f}s >= end {end_time:.2f}s")
             return
         subclip = clip.subclip(start_time, end_time)
-        subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=False)
+        subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=True)
     except Exception as e:
-        print(f"[ERROR] Failed to extract {out_path}: {e}")
+        print(f"[ERROR] ffmpeg/moviepy failed to write {out_path}: {e}")
 
 def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
     os.makedirs(out_dir, exist_ok=True)
