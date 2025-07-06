@@ -1,6 +1,17 @@
 #!/bin/bash
+#SBATCH --job-name=preprocess_job
+#SBATCH --output=logs/preprocess_%j.out
+#SBATCH --error=logs/preprocess_%j.err
+#SBATCH --time=02:00:00          # Adjust time as needed
+#SBATCH --mem=8G                 # Adjust memory as needed
+#SBATCH --cpus-per-task=2        # Adjust CPUs as needed
+#SBATCH --ntasks=1
 
-# Resolve project root (the directory containing this script)
+# Load modules or activate conda environment
+source ~/.bashrc
+conda activate PoloTagger
+
+# Resolve project root
 PROJECT_ROOT=$(dirname "$(dirname "$(realpath "$0")")")
 
 INPUT_DIR="$1"
@@ -18,7 +29,7 @@ echo "[INFO] Output clips: $OUT_CLIPS"
 echo "[INFO] Output CSV: $OUT_CSV"
 echo "[INFO] Logging to $LOG_FILE"
 
-# Run preprocessing using the corrected XML parser script
+# Run preprocessing
 python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir "$INPUT_DIR" \
   --out_dir "$OUT_CLIPS" \
