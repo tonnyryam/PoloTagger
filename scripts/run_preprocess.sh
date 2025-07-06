@@ -11,13 +11,9 @@
 #SBATCH --mail-user=${USER}@mymail.pomona.edu
 #SBATCH --export=ALL
 
-# Fail on any error, undefined var, or pipeline failure
-set -euo pipefail
-
 # Load environment modules (adjust as needed)
-module purge
-module load anaconda/2023.10
-source activate PoloTagger
+module load miniconda3
+conda activate PoloTagger
 
 # Check inputs and set defaults
 if [[ $# -lt 1 ]]; then
