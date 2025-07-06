@@ -1,29 +1,36 @@
 import os
 import re
 import argparse
-import pandas as pd
-import xml.etree.ElementTree as ET
-from moviepy.editor import VideoFileClip
-from docx import Document
 import traceback
+import pandas as pd
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from docx import Document
+from moviepy.editor import VideoFileClip
 
-def parse_xml(xml_path, fps):
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    clips = []
-    for instance in root.findall(".//instance"):
-        label = instance.find("label").text
-        start = int(instance.find("start_frame").text)
-        end = int(instance.find("end_frame").text)
-        clips.append((label, start, end))
-    return clips
+def extract_clip(video_path, out_path, start_frame, end_frame, fps):
+    start = start_frame / fps
+    duration = (end_frame - start_frame) / fps
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start),
+        "-i", video_path,
+        "-t", str(duration),
+        "-c:v", "libx264",
+        "-an",
+        out_path
+    ]
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except Exception as e:
+        print(f"[ERROR] ffmpeg failed for {out_path}: {e}")
 
 def parse_docx(docx_path, fps):
     print(f"[DEBUG] Parsing DOCX with 4-line label blocks: {docx_path}")
     try:
         doc = Document(docx_path)
-        raw_text = "\n".join([p.text.strip() for p in doc.paragraphs])
-        chunks = re.split(r'\n{2,}', raw_text)
+        raw_text = "\\n".join([p.text.strip() for p in doc.paragraphs])
+        chunks = re.split(r'\\n{2,}', raw_text)
         print(f"[DEBUG] Found {len(chunks)} blocks")
 
         clips = []
@@ -32,7 +39,7 @@ def parse_docx(docx_path, fps):
             if len(lines) < 4:
                 continue
             try:
-                _ = lines[0]  # index, ignored
+                index = lines[0]  # ignored
                 start = float(lines[1])
                 end = float(lines[2])
                 label = lines[3]
@@ -44,84 +51,54 @@ def parse_docx(docx_path, fps):
                 print(f"[WARN] Could not parse block {i}: {e}")
         print(f"[INFO] ✅ Parsed {len(clips)} clips from DOCX")
         return clips
-
     except Exception as e:
         print(f"[ERROR] Failed to parse DOCX file: {e}")
         traceback.print_exc()
         return []
 
-def extract_clip(video_path, out_path, start_frame, end_frame, fps):
-    try:
-        print(f"[DEBUG] Extracting: {out_path}")
-        start_time = start_frame / fps
-        end_time = end_frame / fps
-        print(f"[DEBUG] Time range: {start_time:.2f}s to {end_time:.2f}s")
-        clip = VideoFileClip(video_path)
-        print(f"[DEBUG] Video duration: {clip.duration:.2f}s")
-        if end_time > clip.duration:
-            print(f"[WARN] Trimming end_time {end_time:.2f}s to {clip.duration:.2f}s")
-            end_time = clip.duration
-        if start_time >= end_time:
-            print(f"[ERROR] Invalid clip range: start {start_time:.2f}s >= end {end_time:.2f}s")
-            return
-        subclip = clip.subclip(start_time, end_time)
-        subclip.write_videofile(out_path, codec="libx264", audio=False, verbose=True)
-    except Exception as e:
-        print(f"[ERROR] ffmpeg/moviepy failed to write {out_path}: {e}")
-
-def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
-    os.makedirs(out_dir, exist_ok=True)
-    os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
-
+def preprocess_all(input_dir, out_dir, metadata_csv, clip_len, fps):
     entries = []
-    existing_videos = set()
+    seen = set()
 
     if os.path.exists(metadata_csv):
         try:
             df_existing = pd.read_csv(metadata_csv)
-            if not df_existing.empty:
-                existing_videos = set(df_existing['source_video'].unique())
-                entries = df_existing.to_dict("records")
-            else:
-                print(f"[WARN] Existing metadata file is empty: {metadata_csv}")
-        except pd.errors.EmptyDataError:
+            seen = set(df_existing['clip_path'].tolist())
+        except Exception as e:
             print(f"[WARN] Could not parse metadata CSV (empty or malformed): {metadata_csv}")
 
-    for file in os.listdir(input_dir):
-        if file.endswith(".mp4"):
-            base = os.path.splitext(file)[0]
-            if base in existing_videos:
-                print(f"⏩ Skipping already processed video: {base}")
-                continue
+    for fname in os.listdir(input_dir):
+        if not fname.endswith(".mp4"):
+            continue
+        base = fname[:-4]
+        video_path = os.path.join(input_dir, fname)
+        docx_path = os.path.join(input_dir, base + ".docx")
+        if not os.path.exists(docx_path):
+            print(f"[WARN] No .docx file for {base}")
+            continue
 
-            video_path = os.path.join(input_dir, f"{base}.mp4")
-            xml_path = os.path.join(input_dir, f"{base}.xml")
-            docx_path = os.path.join(input_dir, f"{base}.docx")
+        print(f"📦 Processing: {base}")
+        try:
+            clips = parse_docx(docx_path, fps)
+            clip = VideoFileClip(video_path)
+            video_duration = clip.duration
+            clip.close()
+        except Exception as e:
+            print(f"[ERROR] Failed to load video or parse .docx for {base}: {e}")
+            continue
 
-            if os.path.exists(xml_path):
-                clips = parse_xml(xml_path, fps)
-            elif os.path.exists(docx_path):
-                clips = parse_docx(docx_path, fps)
-            else:
-                print(f"⚠️ Skipping {base}: No annotation file (.xml or .docx) found.")
-                continue
-
-            if not clips:
-                print(f"[WARN] No clips extracted from annotation file for {base}")
-                continue
-
-            print(f"📦 Processing: {base}")
-            video_duration = VideoFileClip(video_path).duration
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
             for label, start, end in clips:
                 start_time = start / fps
                 end_time = end / fps
                 if start_time >= video_duration:
-                    print(f"[WARN] Skipping clip starting at {start_time:.2f}s — beyond video end.")
                     continue
                 safe_label = label.replace(" ", "_").replace("/", "_").replace("#", "")
                 clip_filename = f"{safe_label}_{base}_{start}.mp4"
                 out_path = os.path.join(out_dir, clip_filename)
-                extract_clip(video_path, out_path, start, end, fps)
+                if out_path in seen:
+                    continue
                 entries.append({
                     "clip_path": out_path,
                     "label": label,
@@ -129,20 +106,26 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
                     "end_frame": end,
                     "source_video": base
                 })
+                futures.append(executor.submit(extract_clip, video_path, out_path, start, end, fps))
+
+            for f in as_completed(futures):
+                f.result()
 
     if entries:
-        pd.DataFrame(entries).to_csv(metadata_csv, index=False)
+        df = pd.DataFrame(entries)
+        os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
+        df.to_csv(metadata_csv, index=False)
         print(f"✅ Updated metadata saved to {metadata_csv}")
     else:
-        print(f"[WARN] No clips were extracted, metadata not updated")
+        print("[WARN] No new clips created.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", default="data/raw", help="Folder containing .mp4 and annotation files")
-    parser.add_argument("--out_dir", default="data/clips", help="Where to store extracted clips")
-    parser.add_argument("--metadata_csv", default="data/metadata/clip_index.csv", help="Output metadata file")
-    parser.add_argument("--clip_len", type=int, default=5, help="Clip length (used if splitting instead of tags)")
-    parser.add_argument("--fps", type=int, default=30, help="FPS of video")
+    parser.add_argument("--input_dir", type=str, required=True)
+    parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--metadata_csv", type=str, required=True)
+    parser.add_argument("--clip_len", type=int, default=5)
+    parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
 
     preprocess_all(args.input_dir, args.out_dir, args.metadata_csv, args.clip_len, args.fps)

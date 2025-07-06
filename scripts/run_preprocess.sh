@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=preprocess_job
+#SBATCH --job-name=preprocess_fast
 #SBATCH --output=logs/preprocess_%j.out
 #SBATCH --error=logs/preprocess_%j.err
-#SBATCH --time=02:00:00          # Adjust time as needed
-#SBATCH --mem=8G                 # Adjust memory as needed
-#SBATCH --cpus-per-task=2        # Adjust CPUs as needed
+#SBATCH --time=02:00:00
+#SBATCH --mem=16G
+#SBATCH --cpus-per-task=4
 #SBATCH --ntasks=1
 
-# Load modules or activate conda environment
+# Load environment
 source ~/.bashrc
 conda activate PoloTagger
 
@@ -29,19 +29,19 @@ echo "[INFO] Output clips: $OUT_CLIPS"
 echo "[INFO] Output CSV: $OUT_CSV"
 echo "[INFO] Logging to $LOG_FILE"
 
-# Run preprocessing
-python "$PROJECT_ROOT/pipeline/preprocess.py" \
-  --input_dir "$INPUT_DIR" \
-  --out_dir "$OUT_CLIPS" \
-  --metadata_csv "$OUT_CSV" \
-  --clip_len 5 \
+# Run optimized parallel preprocessing
+python "$PROJECT_ROOT/pipeline/preprocess_fast_parallel.py" \\
+  --input_dir "$INPUT_DIR" \\
+  --out_dir "$OUT_CLIPS" \\
+  --metadata_csv "$OUT_CSV" \\
+  --clip_len 5 \\
   --fps 30 | tee -a "$LOG_FILE"
 
-# Check if metadata was created
+# Confirm metadata output
 if [ -f "$OUT_CSV" ]; then
   echo "[INFO] ✅ Metadata CSV successfully created: $OUT_CSV"
 else
-  echo "[ERROR] ❌ Metadata CSV was not created. Check input XML/MP4 files and script logs above."
+  echo "[ERROR] ❌ Metadata CSV was not created. Check logs for issues."
 fi
 
 echo "[INFO] 📄 Log saved to $LOG_FILE"
