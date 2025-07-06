@@ -6,6 +6,7 @@
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 #SBATCH --ntasks=1
+#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger/scripts 
 
 # Load environment
 source ~/.bashrc
