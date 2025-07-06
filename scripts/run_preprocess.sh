@@ -49,7 +49,7 @@ echo "[INFO] Output CSV: $OUT_CSV"
 echo "[INFO] Log file: $LOG_FILE"
 
 # Run with srun to utilize allocated CPUs
-srun python "$PROJECT_ROOT/pipeline/preprocess_fast_parallel.py" \
+srun python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir "$INPUT_DIR" \
   --out_dir "$OUT_CLIPS" \
   --metadata_csv "$OUT_CSV" \
