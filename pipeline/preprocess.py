@@ -1,4 +1,5 @@
 import os
+import re
 import argparse
 import pandas as pd
 import xml.etree.ElementTree as ET
@@ -18,35 +19,29 @@ def parse_xml(xml_path, fps):
     return clips
 
 def parse_docx(docx_path, fps):
-    print(f"[DEBUG] Parsing DOCX in 5-line block format: {docx_path}")
+    print(f"[DEBUG] Parsing DOCX with 4-line label blocks: {docx_path}")
     try:
         doc = Document(docx_path)
-        lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-        print(f"[DEBUG] Found {len(lines)} non-empty lines")
+        raw_text = "\n".join([p.text.strip() for p in doc.paragraphs])
+        chunks = re.split(r'\n{2,}', raw_text)
+        print(f"[DEBUG] Found {len(chunks)} blocks")
 
         clips = []
-        i = 0
-        while i + 3 < len(lines):
+        for i, chunk in enumerate(chunks):
+            lines = [line.strip() for line in chunk.splitlines() if line.strip()]
+            if len(lines) < 4:
+                continue
             try:
-                # Validate that the start and end lines are numbers
-                if not lines[i+1].replace('.', '', 1).isdigit() or not lines[i+2].replace('.', '', 1).isdigit():
-                    print(f"[SKIP] Lines {i+1}-{i+4} are malformed — skipping")
-                    i += 1
-                    continue
-
-                clip_id = lines[i]  # ignored
-                start = float(lines[i + 1])
-                end = float(lines[i + 2])
-                label = lines[i + 3]
+                _ = lines[0]  # index, ignored
+                start = float(lines[1])
+                end = float(lines[2])
+                label = lines[3]
                 start_frame = int(start * fps)
                 end_frame = int(end * fps)
                 clips.append((label, start_frame, end_frame))
-                print(f"[DEBUG] Parsed: {label} [{start:.2f} → {end:.2f}]")
-                i += 5  # Skip block
+                print(f"[DEBUG] Parsed block {i}: {label} [{start:.2f} → {end:.2f}]")
             except Exception as e:
-                print(f"[ERROR] Unexpected error at lines {i+1}-{i+4}: {e}")
-                traceback.print_exc()
-                i += 1
+                print(f"[WARN] Could not parse block {i}: {e}")
         print(f"[INFO] ✅ Parsed {len(clips)} clips from DOCX")
         return clips
 
@@ -123,7 +118,7 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len=5, fps=30):
                 if start_time >= video_duration:
                     print(f"[WARN] Skipping clip starting at {start_time:.2f}s — beyond video end.")
                     continue
-                safe_label = label.replace(" ", "_").replace("/", "_")
+                safe_label = label.replace(" ", "_").replace("/", "_").replace("#", "")
                 clip_filename = f"{safe_label}_{base}_{start}.mp4"
                 out_path = os.path.join(out_dir, clip_filename)
                 extract_clip(video_path, out_path, start, end, fps)
