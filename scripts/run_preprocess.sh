@@ -5,7 +5,6 @@
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=2-00:00:00         # adjust as needed
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
