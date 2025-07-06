@@ -28,6 +28,12 @@ def parse_docx(docx_path, fps):
         i = 0
         while i + 3 < len(lines):
             try:
+                # Validate that the start and end lines are numbers
+                if not lines[i+1].replace('.', '', 1).isdigit() or not lines[i+2].replace('.', '', 1).isdigit():
+                    print(f"[SKIP] Lines {i+1}-{i+4} are malformed — skipping")
+                    i += 1
+                    continue
+
                 clip_id = lines[i]  # ignored
                 start = float(lines[i + 1])
                 end = float(lines[i + 2])
@@ -36,10 +42,7 @@ def parse_docx(docx_path, fps):
                 end_frame = int(end * fps)
                 clips.append((label, start_frame, end_frame))
                 print(f"[DEBUG] Parsed: {label} [{start:.2f} → {end:.2f}]")
-                i += 5
-            except ValueError as e:
-                print(f"[WARN] Could not parse clip at lines {i+1}-{i+4}: {e}")
-                i += 1
+                i += 5  # Skip block
             except Exception as e:
                 print(f"[ERROR] Unexpected error at lines {i+1}-{i+4}: {e}")
                 traceback.print_exc()
