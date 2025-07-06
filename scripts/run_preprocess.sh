@@ -12,6 +12,8 @@
 source ~/.bashrc
 conda activate PoloTagger
 
+cd /bigdata/rhome/tfrw2023/Code/PoloTagger/scripts
+
 # Resolve project root
 PROJECT_ROOT=$(dirname "$(dirname "$(realpath "$0")")")
 
