@@ -2,7 +2,7 @@
 #SBATCH --job-name=preprocess_fast
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
-#SBATCH --partition=compute
+#SBATCH --partition=standard
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
