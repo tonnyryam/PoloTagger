@@ -1,55 +1,67 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_fast
-#SBATCH --output=logs/preprocess_%j.out
-#SBATCH --error=logs/preprocess_%j.err
-#SBATCH --time=02:00:00
-#SBATCH --mem=16G
-#SBATCH --cpus-per-task=4
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
+#SBATCH --partition=compute
+#SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger/scripts
+#SBATCH --cpus-per-task=8
+#SBATCH --mem-per-cpu=4G
+#SBATCH --time=04:00:00
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=${USER}@mymail.pomona.edu
+#SBATCH --export=ALL
 
-# Backup: force directory change in case --chdir fails
-cd /bigdata/rhome/tfrw2023/Code/PoloTagger/scripts
+# Fail on any error, undefined var, or pipeline failure
+set -euo pipefail
 
-# Load environment
-source ~/.bashrc
-conda activate PoloTagger
+# Load environment modules (adjust as needed)
+module purge
+module load anaconda/2023.10
+source activate PoloTagger
 
-# Define paths
-PROJECT_ROOT=$(dirname "$(dirname "$(realpath "$0")")")
+# Check inputs and set defaults
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <input_dir> [clip_len] [fps]"
+  exit 1
+fi
 INPUT_DIR="$1"
+CLIP_LEN="${2:-5}"
+FPS="${3:-30}"
+
+# Define project directories
+PROJECT_ROOT=$(dirname "$(dirname "$(realpath "$0")")")
 OUT_CLIPS="$PROJECT_ROOT/data/clips"
 OUT_CSV="$PROJECT_ROOT/data/metadata/clip_index.csv"
 LOG_DIR="$PROJECT_ROOT/logs"
-TIMESTAMP=$(date "+%Y%m%d_%H%M%S")
-LOG_FILE="$LOG_DIR/preprocess_$TIMESTAMP.log"
-
 mkdir -p "$OUT_CLIPS" "$(dirname "$OUT_CSV")" "$LOG_DIR"
 
-# Logging
-echo "=========================================="
-echo "SLURM_JOB_ID = $SLURM_JOB_ID"
-echo "SLURM_JOB_NODELIST = $SLURM_JOB_NODELIST"
-echo "=========================================="
-echo "[INFO] Starting preprocessing at $TIMESTAMP"
-echo "[INFO] Input directory: $INPUT_DIR"
+# Timestamped logging
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+LOG_FILE="$LOG_DIR/preprocess_${TIMESTAMP}.log"
+
+echo "[INFO] Starting preprocessing: $(date '+%F %T')"
+echo "[INFO] Input dir: $INPUT_DIR"
+echo "[INFO] Clip length: $CLIP_LEN"
+echo "[INFO] FPS: $FPS"
 echo "[INFO] Output clips: $OUT_CLIPS"
 echo "[INFO] Output CSV: $OUT_CSV"
-echo "[INFO] Logging to $LOG_FILE"
+echo "[INFO] Log file: $LOG_FILE"
 
-# Run Python preprocessing
-python "$PROJECT_ROOT/pipeline/preprocess.py" \
+# Run with srun to utilize allocated CPUs
+srun python "$PROJECT_ROOT/pipeline/preprocess_fast_parallel.py" \
   --input_dir "$INPUT_DIR" \
   --out_dir "$OUT_CLIPS" \
   --metadata_csv "$OUT_CSV" \
-  --clip_len 5 \
-  --fps 30 | tee -a "$LOG_FILE"
+  --clip_len "$CLIP_LEN" \
+  --fps "$FPS" 2>&1 | tee -a "$LOG_FILE"
 
-# Confirm output
-if [ -f "$OUT_CSV" ]; then
-  echo "[INFO] ✅ Metadata CSV successfully created: $OUT_CSV"
+# Verify CSV output
+if [[ -s "$OUT_CSV" ]]; then
+  echo "[INFO] ✅ Metadata CSV created: $OUT_CSV"
 else
-  echo "[ERROR] ❌ Metadata CSV was not created. Check logs for issues."
+  echo "[ERROR] ❌ Metadata CSV not found or empty"
+  exit 1
 fi
 
-echo "[INFO] 📄 Log saved to $LOG_FILE"
+echo "[INFO] Completed preprocessing: $(date '+%F %T')"
