@@ -53,7 +53,7 @@ echo "[INFO] Output CSV: \$OUT_CSV"
 echo "[INFO] Log file: \$LOG_FILE"
 
 # Launch preprocessing with srun
-srun --nodes=1 --ntasks=1 --cpus-per-task=\$SLURM_CPUS_PER_TASK \
+srun --nodes=1 --ntasks=1 \
   python "$PROJECT_ROOT/pipeline/preprocess.py" \
     --input_dir "$INPUT_DIR" \
     --out_dir "$OUT_CLIPS" \
