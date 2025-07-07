@@ -21,10 +21,14 @@ conda activate PoloTagger
 # Fail on errors and undefined variables
 set -euo pipefail
 
-# Change to the directory where sbatch was invoked and set project root
-cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
-DATA_DIR="$PROJECT_ROOT/data"
+# Determine script path and project root\ nSCRIPT_PATH=$(realpath "$0")
+SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
+
+# Change to project root
+cd "$PROJECT_ROOT"
+
+# Base data directory\ nDATA_DIR="$PROJECT_ROOT/data"
 
 # Parse arguments
 if [[ $# -lt 1 ]]; then
