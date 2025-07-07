@@ -21,15 +21,9 @@ conda activate PoloTagger
 # Fail on errors and undefined variables
 set -euo pipefail
 
-# Determine script and project paths
-SCRIPT_PATH=$(realpath "$0")
-SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
-PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
-
-# Change to project root
-cd "$PROJECT_ROOT"
-
-# Base data directory (relative to project)
+# Change to the directory where sbatch was invoked and set project root
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
 DATA_DIR="$PROJECT_ROOT/data"
 
 # Parse arguments
@@ -41,7 +35,7 @@ INPUT_DIR="$1"
 CLIP_LEN="${2:-5}"
 FPS="${3:-30}"
 
-# Set output paths under data directory
+# Define output paths
 OUT_CLIPS="$DATA_DIR/clips"
 OUT_METADATA="$DATA_DIR/metadata"
 OUT_CSV="$OUT_METADATA/clip_index.csv"
@@ -55,25 +49,23 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 LOG_FILE="$LOG_DIR/preprocess_${timestamp}.log"
 
 # Log configuration
-cat <<EOF | tee -a "$LOG_FILE"
-[INFO] Starting preprocessing: $(date '+%F %T')
-[INFO] Input dir: $INPUT_DIR
-[INFO] Clip length: $CLIP_LEN
-[INFO] FPS: $FPS
-[INFO] Output clips: $OUT_CLIPS
-[INFO] Output CSV: $OUT_CSV
-[INFO] Log file: $LOG_FILE
-EOF
+echo "[INFO] Starting preprocessing: $(date '+%F %T')" | tee -a "$LOG_FILE"
+echo "[INFO] Input dir: $INPUT_DIR"       | tee -a "$LOG_FILE"
+echo "[INFO] Clip length: $CLIP_LEN"      | tee -a "$LOG_FILE"
+echo "[INFO] FPS: $FPS"                   | tee -a "$LOG_FILE"
+echo "[INFO] Output clips: $OUT_CLIPS"     | tee -a "$LOG_FILE"
+echo "[INFO] Output CSV: $OUT_CSV"         | tee -a "$LOG_FILE"
+echo "[INFO] Log file: $LOG_FILE"          | tee -a "$LOG_FILE"
 
-# Run preprocessing via srun
-srun python "$PROJECT_ROOT/pipeline/preprocess_fast_parallel.py" \
+# Run preprocessing script via srun
+srun python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir "$INPUT_DIR" \
   --out_dir "$OUT_CLIPS" \
   --metadata_csv "$OUT_CSV" \
   --clip_len "$CLIP_LEN" \
   --fps "$FPS" 2>&1 | tee -a "$LOG_FILE"
 
-# Verify output
+# Verify output CSV
 if [[ -s "$OUT_CSV" ]]; then
   echo "[INFO] ✅ Metadata CSV created: $OUT_CSV" | tee -a "$LOG_FILE"
 else
