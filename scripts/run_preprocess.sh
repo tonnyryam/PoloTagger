@@ -6,11 +6,11 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
-#SBATCH --time=2-00:00:00         # adjust as needed
+#SBATCH --time=2-00:00:00
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
 
-# Print date and node for debugging
+# Print timestamp and node for debugging
 date
 hostname
 
@@ -18,56 +18,68 @@ hostname
 module load miniconda3
 conda activate PoloTagger
 
-# Robust error handling
+# Fail on errors and undefined variables
 set -euo pipefail
 
-# Ensure working directory is where sbatch was invoked
-cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
-PROJECT_ROOT="$(pwd)"
+# Determine script and project paths
+SCRIPT_PATH=$(realpath "$0")
+SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
 
-# Usage and defaults
+# Change to project root
+cd "$PROJECT_ROOT"
+
+# Base data directory (relative to project)
+DATA_DIR="$PROJECT_ROOT/data"
+
+# Parse arguments
 if [[ $# -lt 1 ]]; then
-  echo "Usage: \$0 <input_dir> [clip_len] [fps]"
+  echo "Usage: $0 <input_dir> [clip_len] [fps]"
   exit 1
 fi
 INPUT_DIR="$1"
-CLIP_LEN="\${2:-5}"
-FPS="\${3:-30}"
+CLIP_LEN="${2:-5}"
+FPS="${3:-30}"
 
-# Output locations under project root
-OUT_CLIPS="/bigdata/rhome/tfrw2023/Code/PoloTagger/data/clips"
-OUT_CSV="/bigdata/rhome/tfrw2023/Code/PoloTagger/data/metadata/clip_index.csv"
+# Set output paths under data directory
+OUT_CLIPS="$DATA_DIR/clips"
+OUT_METADATA="$DATA_DIR/metadata"
+OUT_CSV="$OUT_METADATA/clip_index.csv"
 LOG_DIR="$PROJECT_ROOT/logs"
-mkdir -p "$OUT_CLIPS" "$(dirname "$OUT_CSV")" "$LOG_DIR"
 
-# Timestamp for log
-TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
-LOG_FILE="$LOG_DIR/preprocess_${TIMESTAMP}.log"
+# Create necessary directories
+mkdir -p "$OUT_CLIPS" "$OUT_METADATA" "$LOG_DIR"
 
-echo "[INFO] Starting preprocessing: \$(date '+%F %T')"
-echo "[INFO] Input dir: \$INPUT_DIR"
-echo "[INFO] Clip length: \$CLIP_LEN"
-echo "[INFO] FPS: \$FPS"
-echo "[INFO] Output clips: \$OUT_CLIPS"
-echo "[INFO] Output CSV: \$OUT_CSV"
-echo "[INFO] Log file: \$LOG_FILE"
+# Prepare log file
+timestamp=$(date '+%Y%m%d_%H%M%S')
+LOG_FILE="$LOG_DIR/preprocess_${timestamp}.log"
 
-# Launch preprocessing with srun
-srun --nodes=1 --ntasks=1 \
-  python "$PROJECT_ROOT/pipeline/preprocess.py" \
-    --input_dir "$INPUT_DIR" \
-    --out_dir "$OUT_CLIPS" \
-    --metadata_csv "$OUT_CSV" \
-    --clip_len "$CLIP_LEN" \
-    --fps "$FPS" 2>&1 | tee -a "$LOG_FILE"
+# Log configuration
+cat <<EOF | tee -a "$LOG_FILE"
+[INFO] Starting preprocessing: $(date '+%F %T')
+[INFO] Input dir: $INPUT_DIR
+[INFO] Clip length: $CLIP_LEN
+[INFO] FPS: $FPS
+[INFO] Output clips: $OUT_CLIPS
+[INFO] Output CSV: $OUT_CSV
+[INFO] Log file: $LOG_FILE
+EOF
 
-# Verify output CSV
+# Run preprocessing via srun
+srun python "$PROJECT_ROOT/pipeline/preprocess_fast_parallel.py" \
+  --input_dir "$INPUT_DIR" \
+  --out_dir "$OUT_CLIPS" \
+  --metadata_csv "$OUT_CSV" \
+  --clip_len "$CLIP_LEN" \
+  --fps "$FPS" 2>&1 | tee -a "$LOG_FILE"
+
+# Verify output
 if [[ -s "$OUT_CSV" ]]; then
-  echo "[INFO] ✅ Metadata CSV created: $OUT_CSV"
+  echo "[INFO] ✅ Metadata CSV created: $OUT_CSV" | tee -a "$LOG_FILE"
 else
-  echo "[ERROR] ❌ Metadata CSV not found or empty"
+  echo "[ERROR] ❌ Metadata CSV not found or empty" | tee -a "$LOG_FILE"
   exit 1
 fi
 
-# Done
-echo "[INFO] Completed preprocessing: \$(date '+%F %T')"
+# Completion timestamp
+echo "[INFO] Completed preprocessing: $(date '+%F %T')" | tee -a "$LOG_FILE"
