@@ -35,8 +35,8 @@ CLIP_LEN="\${2:-5}"
 FPS="\${3:-30}"
 
 # Output locations under project root
-OUT_CLIPS="$PROJECT_ROOT/data/clips"
-OUT_CSV="$PROJECT_ROOT/data/metadata/clip_index.csv"
+OUT_CLIPS="./bigdata/rhome/tfrw2023/Code/PoloTagger/data/clips"
+OUT_CSV="./bigdata/rhome/tfrw2023/Code/PoloTagger/data/metadata/clip_index.csv"
 LOG_DIR="$PROJECT_ROOT/logs"
 mkdir -p "$OUT_CLIPS" "$(dirname "$OUT_CSV")" "$LOG_DIR"
 
