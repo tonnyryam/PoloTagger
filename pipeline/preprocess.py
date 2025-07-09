@@ -39,25 +39,54 @@ def parse_docx(docx_path, fps):
     try:
         doc = Document(docx_path)
         raw_text = "\\n".join([p.text.strip() for p in doc.paragraphs])
+        print(f"[DEBUG] Raw text from DOCX:")
+        print(repr(raw_text))
+        print(f"[DEBUG] Raw text readable:")
+        print(raw_text)
+
         chunks = re.split(r"\\n{2,}", raw_text)
-        print(f"[DEBUG] Found {len(chunks)} blocks")
+        print(f"[DEBUG] Found {len(chunks)} blocks after splitting")
+
+        for i, chunk in enumerate(chunks):
+            print(f"[DEBUG] Block {i}: {repr(chunk)}")
 
         clips = []
         for i, chunk in enumerate(chunks):
             lines = [line.strip() for line in chunk.splitlines() if line.strip()]
+            print(f"[DEBUG] Block {i} has {len(lines)} lines: {lines}")
+
             if len(lines) < 4:
+                print(
+                    f"[DEBUG] Block {i} skipped - insufficient lines ({len(lines)} < 4)"
+                )
                 continue
+
             try:
                 index = lines[0]  # ignored
                 start = float(lines[1])
                 end = float(lines[2])
                 label = lines[3]
+
+                print(
+                    f"[DEBUG] Block {i} parsed: index='{index}', start={start}, end={end}, label='{label}'"
+                )
+
+                if start >= end:
+                    print(
+                        f"[DEBUG] Block {i} skipped - invalid time range: start={start} >= end={end}"
+                    )
+                    continue
+
                 start_frame = int(start * fps)
                 end_frame = int(end * fps)
                 clips.append((label, start_frame, end_frame))
-                print(f"[DEBUG] Parsed block {i}: {label} [{start:.2f} → {end:.2f}]")
+                print(
+                    f"[DEBUG] Block {i} added: {label} [{start:.2f}s → {end:.2f}s] frames[{start_frame} → {end_frame}]"
+                )
             except Exception as e:
                 print(f"[WARN] Could not parse block {i}: {e}")
+                print(f"[DEBUG] Block {i} content: {lines}")
+
         print(f"[INFO] ✅ Parsed {len(clips)} clips from DOCX")
         return clips
     except Exception as e:
@@ -99,6 +128,7 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len, fps):
             clip = VideoFileClip(video_path)
             video_duration = clip.duration
             clip.close()
+            print(f"[DEBUG] Video duration: {video_duration} seconds")
         except Exception as e:
             print(f"[ERROR] Failed to load video or parse .docx for {base}: {e}")
             continue
@@ -108,13 +138,25 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len, fps):
             for label, start, end in clips:
                 start_time = start / fps
                 end_time = end / fps
+                print(
+                    f"[DEBUG] Checking clip: {label} [{start_time:.2f}s → {end_time:.2f}s] vs video duration {video_duration}s"
+                )
+
                 if start_time >= video_duration:
+                    print(
+                        f"[DEBUG] Skipping clip {label} - start time {start_time} >= video duration {video_duration}"
+                    )
                     continue
+
                 safe_label = label.replace(" ", "_").replace("/", "_").replace("#", "")
                 clip_filename = f"{safe_label}_{base}_{start}.mp4"
                 out_path = os.path.join(out_dir, clip_filename)
+
                 if out_path in seen:
+                    print(f"[DEBUG] Skipping duplicate clip: {out_path}")
                     continue
+
+                print(f"[DEBUG] Adding clip: {out_path}")
                 entries.append(
                     {
                         "clip_path": out_path,
