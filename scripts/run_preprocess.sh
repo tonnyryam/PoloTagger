@@ -1,8 +1,8 @@
 #!/bin/bash -l
 
 #SBATCH --job-name=preprocess_fast
-#SBATCH --output=scripts/logs/%x_%j.log
-#SBATCH --error=scripts/logs/%x_%j.log
+#SBATCH --output=scripts/%x_%j.log
+#SBATCH --error=scripts/%x_%j.log
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
@@ -11,34 +11,28 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger
 
-# Print timestamp and node for debugging
+# Debug info
 date
 hostname
 
-# Load conda and activate environment
+# Load environment
 module load miniconda3
 conda activate PoloTagger
 
-# Fail on errors and undefined variables
+# Bail on any error or undefined variable
 set -euo pipefail
 
-# Determine script directory and repo root
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
-  PROJECT_ROOT="$SLURM_SUBMIT_DIR"
-else
-  PROJECT_ROOT="$( realpath "$SCRIPT_DIR/.." )"
-fi
-cd "$PROJECT_ROOT"
+# 1. Define PROJECT_ROOT as the current working directory (set by --chdir)
+PROJECT_ROOT="$(pwd)"
 
-# Locate your data directory
+# 2. Verify data directory exists at $PROJECT_ROOT/data
 DATA_DIR="$PROJECT_ROOT/data"
 if [[ ! -d "$DATA_DIR" ]]; then
   echo "[ERROR] Data directory not found: $DATA_DIR"
   exit 1
 fi
 
-# Parse arguments
+# 3. Parse arguments
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <relative/path/to/raw_data> [clip_len] [fps]"
   exit 1
@@ -53,31 +47,32 @@ if [[ ! -d "$INPUT_DIR" ]]; then
   exit 1
 fi
 
-# Define output paths
+# 4. Set up outputs
 OUT_CLIPS="$DATA_DIR/clips"
 OUT_METADATA="$DATA_DIR/metadata"
 OUT_CSV="$OUT_METADATA/clip_index.csv"
 
-# Put logs inside the scripts/ folder
-LOG_DIR="$SCRIPT_DIR/logs"
-mkdir -p "$OUT_CLIPS" "$OUT_METADATA" "$LOG_DIR"
+# Ensure clips & metadata dirs exist
+mkdir -p "$OUT_CLIPS" "$OUT_METADATA"
 
-# Prepare log file with timestamp
+# 5. Logs go into scripts/
+LOG_DIR="$PROJECT_ROOT/scripts"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 LOG_FILE="$LOG_DIR/preprocess_${timestamp}.log"
 
-# Log configuration
+# Write header to log
 {
   echo "[INFO] Starting preprocessing: $(date '+%F %T')"
-  echo "[INFO] Input dir:        $INPUT_DIR"
-  echo "[INFO] Clip length:      $CLIP_LEN"
-  echo "[INFO] FPS:              $FPS"
-  echo "[INFO] Output clips:     $OUT_CLIPS"
-  echo "[INFO] Output CSV:       $OUT_CSV"
-  echo "[INFO] Log file:         $LOG_FILE"
+  echo "[INFO] PROJECT_ROOT:       $PROJECT_ROOT"
+  echo "[INFO] Input directory:    $INPUT_DIR"
+  echo "[INFO] Clip length (s):    $CLIP_LEN"
+  echo "[INFO] FPS:                $FPS"
+  echo "[INFO] Output clips dir:   $OUT_CLIPS"
+  echo "[INFO] Metadata CSV path:  $OUT_CSV"
+  echo "[INFO] Combined log file:  $LOG_FILE"
 } | tee -a "$LOG_FILE"
 
-# Execute preprocessing via srun
+# 6. Run the Python pipeline
 srun python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir    "$INPUT_DIR" \
   --out_dir      "$OUT_CLIPS" \
@@ -85,13 +80,13 @@ srun python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --clip_len     "$CLIP_LEN" \
   --fps          "$FPS" 2>&1 | tee -a "$LOG_FILE"
 
-# Verify output CSV
+# 7. Verify that metadata CSV was created
 if [[ -s "$OUT_CSV" ]]; then
   echo "[INFO] ✅ Metadata CSV created: $OUT_CSV" | tee -a "$LOG_FILE"
 else
-  echo "[ERROR] ❌ Metadata CSV not found or empty" | tee -a "$LOG_FILE"
+  echo "[ERROR] ❌ Metadata CSV not found or is empty" | tee -a "$LOG_FILE"
   exit 1
 fi
 
-# Completion timestamp
+# 8. Final timestamp
 echo "[INFO] Completed preprocessing: $(date '+%F %T')" | tee -a "$LOG_FILE"
