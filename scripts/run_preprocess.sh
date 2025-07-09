@@ -54,7 +54,7 @@ fi
 OUT_CLIPS="$DATA_DIR/clips"
 OUT_METADATA="$DATA_DIR/metadata"
 OUT_CSV="$OUT_METADATA/clip_index.csv"
-LOG_DIR="$PROJECT_ROOT/logs"
+LOG_DIR="$PROJECT_ROOT/scripts/logs"
 mkdir -p "$OUT_CLIPS" "$OUT_METADATA" "$LOG_DIR"
 
 timestamp=$(date '+%Y%m%d_%H%M%S')
