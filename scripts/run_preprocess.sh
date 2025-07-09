@@ -21,14 +21,17 @@ conda activate PoloTagger
 # Fail on errors and undefined variables
 set -euo pipefail
 
-# Determine script path and project root\ nSCRIPT_PATH=$(realpath "$0")
-SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
-PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
+# Switch to submission directory as project root
+dd
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
+DATA_DIR="$PROJECT_ROOT/data"
 
-# Change to project root
-cd "$PROJECT_ROOT"
-
-# Base data directory\ nDATA_DIR="$PROJECT_ROOT/data"
+# Verify DATA_DIR exists
+if [[ ! -d "$DATA_DIR" ]]; then
+  echo "[ERROR] Data directory not found: $DATA_DIR"
+  exit 1
+fi
 
 # Parse arguments
 if [[ $# -lt 1 ]]; then
@@ -39,7 +42,7 @@ INPUT_DIR="$1"
 CLIP_LEN="${2:-5}"
 FPS="${3:-30}"
 
-# Define output paths
+# Define output paths under DATA_DIR
 OUT_CLIPS="$DATA_DIR/clips"
 OUT_METADATA="$DATA_DIR/metadata"
 OUT_CSV="$OUT_METADATA/clip_index.csv"
@@ -48,7 +51,7 @@ LOG_DIR="$PROJECT_ROOT/logs"
 # Create necessary directories
 mkdir -p "$OUT_CLIPS" "$OUT_METADATA" "$LOG_DIR"
 
-# Prepare log file
+# Prepare log file with timestamp
 timestamp=$(date '+%Y%m%d_%H%M%S')
 LOG_FILE="$LOG_DIR/preprocess_${timestamp}.log"
 
@@ -61,7 +64,7 @@ echo "[INFO] Output clips: $OUT_CLIPS"     | tee -a "$LOG_FILE"
 echo "[INFO] Output CSV: $OUT_CSV"         | tee -a "$LOG_FILE"
 echo "[INFO] Log file: $LOG_FILE"          | tee -a "$LOG_FILE"
 
-# Run preprocessing script via srun
+# Execute preprocessing via srun
 srun python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir "$INPUT_DIR" \
   --out_dir "$OUT_CLIPS" \
