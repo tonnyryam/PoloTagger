@@ -17,12 +17,19 @@ hostname
 
 # 2. Load & initialize Conda (more robust approach)
 module load miniconda3
-source activate PoloTagger
+
+# Initialize conda for bash
+source /opt/linux/rocky/8/software/miniconda3/py312_24.9.2-0/etc/profile.d/conda.sh
+
+# Activate environment
+conda activate PoloTagger
 
 # Verify conda environment is active
 echo "[INFO] Active conda environment: $CONDA_DEFAULT_ENV"
 echo "[INFO] Python path: $(which python)"
 echo "[INFO] Python version: $(python --version)"
+echo "[INFO] Conda info:"
+conda info --envs
 
 # 3. Bail on errors or unset vars
 set -euo pipefail
