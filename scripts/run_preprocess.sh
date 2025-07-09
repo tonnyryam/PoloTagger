@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=preprocess_fast
+#SBATCH --job-name=preprocess
 #SBATCH --output=scripts/%x_%j.log
 #SBATCH --error=scripts/%x_%j.log
 #SBATCH --nodes=1
@@ -15,10 +15,9 @@
 date
 hostname
 
-# 2. Load & initialize Conda
-module load miniconda3
-eval "$(conda shell.bash hook)"
-conda activate PoloTagger
+# 2. Use the exact Python from your PoloTagger env
+PYTHON_EXEC="$HOME/.conda/envs/PoloTagger/bin/python"
+echo "[INFO] Python path: $PYTHON_EXEC"
 
 # 3. Bail on errors or unset vars
 set -euo pipefail
@@ -26,7 +25,7 @@ set -euo pipefail
 # 4. PROJECT_ROOT is forced by --chdir
 PROJECT_ROOT="$(pwd)"
 
-# 5. Verify data directory
+# 5. Verify data directory exists under the repo
 DATA_DIR="$PROJECT_ROOT/data"
 if [[ ! -d "$DATA_DIR" ]]; then
   echo "[ERROR] Data directory not found: $DATA_DIR"
@@ -48,7 +47,7 @@ if [[ ! -d "$INPUT_DIR" ]]; then
   exit 1
 fi
 
-# 7. Prepare output dirs
+# 7. Prepare output directories
 OUT_CLIPS="$DATA_DIR/clips"
 OUT_METADATA="$DATA_DIR/metadata"
 OUT_CSV="$OUT_METADATA/clip_index.csv"
@@ -63,16 +62,15 @@ echo "[INFO] FPS:                $FPS"
 echo "[INFO] Output clips dir:   $OUT_CLIPS"
 echo "[INFO] Metadata CSV path:  $OUT_CSV"
 
-# 9. Verify Python environment
-echo "[INFO] Python path: $(which python)"
+# 9. Test pandas import using the correct Python
 echo "[INFO] Testing pandas import..."
-python - << 'EOF'
+"$PYTHON_EXEC" - << 'EOF'
 import pandas
 print("Pandas version:", pandas.__version__)
 EOF
 
 # 10. Run the preprocessing pipeline
-python "$PROJECT_ROOT/pipeline/preprocess.py" \
+"$PYTHON_EXEC" "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir    "$INPUT_DIR" \
   --out_dir      "$OUT_CLIPS" \
   --metadata_csv "$OUT_CSV" \
