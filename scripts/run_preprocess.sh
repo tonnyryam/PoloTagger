@@ -15,21 +15,8 @@
 date
 hostname
 
-# 2. Load & initialize Conda (more robust approach)
+# 2. Load miniconda module
 module load miniconda3
-
-# Initialize conda for bash
-source /opt/linux/rocky/8/software/miniconda3/py312_24.9.2-0/etc/profile.d/conda.sh
-
-# Activate environment
-conda activate PoloTagger
-
-# Verify conda environment is active
-echo "[INFO] Active conda environment: $CONDA_DEFAULT_ENV"
-echo "[INFO] Python path: $(which python)"
-echo "[INFO] Python version: $(python --version)"
-echo "[INFO] Conda info:"
-conda info --envs
 
 # 3. Bail on errors or unset vars
 set -euo pipefail
@@ -74,12 +61,13 @@ echo "[INFO] FPS:                $FPS"
 echo "[INFO] Output clips dir:   $OUT_CLIPS"
 echo "[INFO] Metadata CSV path:  $OUT_CSV"
 
-# 9. Test pandas import before running the full script
-echo "[INFO] Testing pandas import..."
-python -c "import pandas as pd; print(f'Pandas version: {pd.__version__}')"
+# 9. Test pandas import using conda run
+echo "[INFO] Testing pandas import with conda run..."
+echo "[INFO] Python path with conda run: $(conda run -n PoloTagger which python)"
+conda run -n PoloTagger python -c "import pandas as pd; print(f'Pandas version: {pd.__version__}')"
 
-# 10. Run the Python pipeline directly
-python "$PROJECT_ROOT/pipeline/preprocess.py" \
+# 10. Run the Python pipeline using conda run
+conda run -n PoloTagger python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir    "$INPUT_DIR" \
   --out_dir      "$OUT_CLIPS" \
   --metadata_csv "$OUT_CSV" \
