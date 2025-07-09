@@ -8,29 +8,38 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from docx import Document
 from moviepy.editor import VideoFileClip
 
+
 def extract_clip(video_path, out_path, start_frame, end_frame, fps):
     start = start_frame / fps
     duration = (end_frame - start_frame) / fps
     cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(start),
-        "-i", video_path,
-        "-t", str(duration),
-        "-c:v", "libx264",
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(start),
+        "-i",
+        video_path,
+        "-t",
+        str(duration),
+        "-c:v",
+        "libx264",
         "-an",
-        out_path
+        out_path,
     ]
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
+        )
     except Exception as e:
         print(f"[ERROR] ffmpeg failed for {out_path}: {e}")
+
 
 def parse_docx(docx_path, fps):
     print(f"[DEBUG] Parsing DOCX with 4-line label blocks: {docx_path}")
     try:
         doc = Document(docx_path)
         raw_text = "\\n".join([p.text.strip() for p in doc.paragraphs])
-        chunks = re.split(r'\\n{2,}', raw_text)
+        chunks = re.split(r"\\n{2,}", raw_text)
         print(f"[DEBUG] Found {len(chunks)} blocks")
 
         clips = []
@@ -56,16 +65,23 @@ def parse_docx(docx_path, fps):
         traceback.print_exc()
         return []
 
+
 def preprocess_all(input_dir, out_dir, metadata_csv, clip_len, fps):
     entries = []
     seen = set()
+    existing_df = None
 
+    # Load existing CSV if it exists
     if os.path.exists(metadata_csv):
         try:
-            df_existing = pd.read_csv(metadata_csv)
-            seen = set(df_existing['clip_path'].tolist())
+            existing_df = pd.read_csv(metadata_csv)
+            seen = set(existing_df["clip_path"].tolist())
+            print(f"[INFO] Loaded existing CSV with {len(existing_df)} entries")
         except Exception as e:
-            print(f"[WARN] Could not parse metadata CSV (empty or malformed): {metadata_csv}")
+            print(
+                f"[WARN] Could not parse existing CSV (empty or malformed): {metadata_csv}"
+            )
+            existing_df = None
 
     for fname in os.listdir(input_dir):
         if not fname.endswith(".mp4"):
@@ -99,25 +115,60 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len, fps):
                 out_path = os.path.join(out_dir, clip_filename)
                 if out_path in seen:
                     continue
-                entries.append({
-                    "clip_path": out_path,
-                    "label": label,
-                    "start_frame": start,
-                    "end_frame": end,
-                    "source_video": base
-                })
-                futures.append(executor.submit(extract_clip, video_path, out_path, start, end, fps))
+                entries.append(
+                    {
+                        "clip_path": out_path,
+                        "label": label,
+                        "start_frame": start,
+                        "end_frame": end,
+                        "source_video": base,
+                    }
+                )
+                futures.append(
+                    executor.submit(extract_clip, video_path, out_path, start, end, fps)
+                )
 
             for f in as_completed(futures):
                 f.result()
 
+    # Always create/update the CSV file
+    os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
+
     if entries:
-        df = pd.DataFrame(entries)
-        os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
-        df.to_csv(metadata_csv, index=False)
-        print(f"✅ Updated metadata saved to {metadata_csv}")
+        # New entries found - append to existing or create new
+        new_df = pd.DataFrame(entries)
+        if existing_df is not None:
+            # Append to existing CSV
+            final_df = pd.concat([existing_df, new_df], ignore_index=True)
+            print(f"✅ Added {len(entries)} new entries to existing CSV")
+        else:
+            # Create new CSV
+            final_df = new_df
+            print(f"✅ Created new CSV with {len(entries)} entries")
+
+        final_df.to_csv(metadata_csv, index=False)
+        print(f"✅ Metadata saved to {metadata_csv}")
     else:
-        print("[WARN] No new clips created.")
+        # No new entries - ensure CSV exists
+        if existing_df is not None:
+            # CSV already exists with data - no change needed
+            print(
+                f"✅ No new clips found - existing CSV unchanged ({len(existing_df)} entries)"
+            )
+        else:
+            # Create empty CSV with proper headers
+            empty_df = pd.DataFrame(
+                columns=[
+                    "clip_path",
+                    "label",
+                    "start_frame",
+                    "end_frame",
+                    "source_video",
+                ]
+            )
+            empty_df.to_csv(metadata_csv, index=False)
+            print(f"✅ Created empty CSV with headers: {metadata_csv}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -128,4 +179,6 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
 
-    preprocess_all(args.input_dir, args.out_dir, args.metadata_csv, args.clip_len, args.fps)
+    preprocess_all(
+        args.input_dir, args.out_dir, args.metadata_csv, args.clip_len, args.fps
+    )
