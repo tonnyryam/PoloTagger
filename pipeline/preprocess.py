@@ -22,7 +22,7 @@ def extract_clip(video_path, out_path, start_frame, end_frame, fps):
         "-t",
         str(duration),
         "-c:v",
-        "libx264",
+        "copy",  # ← stream-copy the H.264 video instead of re-encoding
         "-an",
         out_path,
     ]
