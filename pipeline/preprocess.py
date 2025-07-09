@@ -38,13 +38,16 @@ def parse_docx(docx_path, fps):
     print(f"[DEBUG] Parsing DOCX with 4-line label blocks: {docx_path}")
     try:
         doc = Document(docx_path)
-        raw_text = "\\n".join([p.text.strip() for p in doc.paragraphs])
+
+        # FIX: use real newline characters, not the two-character string "\\n"
+        raw_text = "\n".join([p.text.strip() for p in doc.paragraphs])
         print(f"[DEBUG] Raw text from DOCX:")
         print(repr(raw_text))
         print(f"[DEBUG] Raw text readable:")
         print(raw_text)
 
-        chunks = re.split(r"\\n{2,}", raw_text)
+        # FIX: split on blank lines using real newlines
+        chunks = re.split(r"\n{2,}", raw_text)
         print(f"[DEBUG] Found {len(chunks)} blocks after splitting")
 
         for i, chunk in enumerate(chunks):
@@ -177,28 +180,21 @@ def preprocess_all(input_dir, out_dir, metadata_csv, clip_len, fps):
     os.makedirs(os.path.dirname(metadata_csv), exist_ok=True)
 
     if entries:
-        # New entries found - append to existing or create new
         new_df = pd.DataFrame(entries)
         if existing_df is not None:
-            # Append to existing CSV
             final_df = pd.concat([existing_df, new_df], ignore_index=True)
             print(f"✅ Added {len(entries)} new entries to existing CSV")
         else:
-            # Create new CSV
             final_df = new_df
             print(f"✅ Created new CSV with {len(entries)} entries")
-
         final_df.to_csv(metadata_csv, index=False)
         print(f"✅ Metadata saved to {metadata_csv}")
     else:
-        # No new entries - ensure CSV exists
         if existing_df is not None:
-            # CSV already exists with data - no change needed
             print(
                 f"✅ No new clips found - existing CSV unchanged ({len(existing_df)} entries)"
             )
         else:
-            # Create empty CSV with proper headers
             empty_df = pd.DataFrame(
                 columns=[
                     "clip_path",
@@ -217,10 +213,14 @@ if __name__ == "__main__":
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--metadata_csv", type=str, required=True)
-    parser.add_argument("--clip_len", type=int, default=5)
+    parser.add_argument("--clip_len", type=float, default=5)
     parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args()
 
     preprocess_all(
-        args.input_dir, args.out_dir, args.metadata_csv, args.clip_len, args.fps
+        input_dir=args.input_dir,
+        out_dir=args.out_dir,
+        metadata_csv=args.metadata_csv,
+        clip_len=args.clip_len,
+        fps=args.fps,
     )
