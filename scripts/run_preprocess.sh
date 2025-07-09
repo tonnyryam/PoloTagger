@@ -15,10 +15,14 @@
 date
 hostname
 
-# 2. Load & initialize Conda
+# 2. Load & initialize Conda (more robust approach)
 module load miniconda3
-eval "$(conda shell.bash hook)"
-conda activate PoloTagger
+source activate PoloTagger
+
+# Verify conda environment is active
+echo "[INFO] Active conda environment: $CONDA_DEFAULT_ENV"
+echo "[INFO] Python path: $(which python)"
+echo "[INFO] Python version: $(python --version)"
 
 # 3. Bail on errors or unset vars
 set -euo pipefail
@@ -63,7 +67,11 @@ echo "[INFO] FPS:                $FPS"
 echo "[INFO] Output clips dir:   $OUT_CLIPS"
 echo "[INFO] Metadata CSV path:  $OUT_CSV"
 
-# 9. Run the Python pipeline directly
+# 9. Test pandas import before running the full script
+echo "[INFO] Testing pandas import..."
+python -c "import pandas as pd; print(f'Pandas version: {pd.__version__}')"
+
+# 10. Run the Python pipeline directly
 python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --input_dir    "$INPUT_DIR" \
   --out_dir      "$OUT_CLIPS" \
@@ -71,7 +79,7 @@ python "$PROJECT_ROOT/pipeline/preprocess.py" \
   --clip_len     "$CLIP_LEN" \
   --fps          "$FPS"
 
-# 10. Verify success
+# 11. Verify success
 if [[ -s "$OUT_CSV" ]]; then
   echo "[INFO] ✅ Metadata CSV created: $OUT_CSV"
 else
@@ -79,5 +87,5 @@ else
   exit 1
 fi
 
-# 11. Completion timestamp
+# 12. Completion timestamp
 echo "[INFO] Completed preprocessing: $(date '+%F %T')"
