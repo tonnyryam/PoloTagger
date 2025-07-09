@@ -9,6 +9,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
+#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger
 
 # Print timestamp and node for debugging
 date
@@ -21,13 +22,13 @@ conda activate PoloTagger
 # Fail on errors and undefined variables
 set -euo pipefail
 
-# Switch to submission directory as project root
-dd
-cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
-DATA_DIR="$PROJECT_ROOT/data"
+# Determine script directory and repo root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( realpath "$SCRIPT_DIR/.." )"
+cd "$PROJECT_ROOT"
 
-# Verify DATA_DIR exists
+# Data lives under the repo
+DATA_DIR="$PROJECT_ROOT/data"
 if [[ ! -d "$DATA_DIR" ]]; then
   echo "[ERROR] Data directory not found: $DATA_DIR"
   exit 1
@@ -35,12 +36,18 @@ fi
 
 # Parse arguments
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <input_dir> [clip_len] [fps]"
+  echo "Usage: $0 <relative/path/to/raw_data> [clip_len] [fps]"
   exit 1
 fi
-INPUT_DIR="$1"
+REL_INPUT_DIR="$1"
+INPUT_DIR="$PROJECT_ROOT/$REL_INPUT_DIR"
 CLIP_LEN="${2:-5}"
 FPS="${3:-30}"
+
+if [[ ! -d "$INPUT_DIR" ]]; then
+  echo "[ERROR] Input directory not found: $INPUT_DIR"
+  exit 1
+fi
 
 # Define output paths under DATA_DIR
 OUT_CLIPS="$DATA_DIR/clips"
@@ -60,9 +67,9 @@ echo "[INFO] Starting preprocessing: $(date '+%F %T')" | tee -a "$LOG_FILE"
 echo "[INFO] Input dir: $INPUT_DIR"       | tee -a "$LOG_FILE"
 echo "[INFO] Clip length: $CLIP_LEN"      | tee -a "$LOG_FILE"
 echo "[INFO] FPS: $FPS"                   | tee -a "$LOG_FILE"
-echo "[INFO] Output clips: $OUT_CLIPS"     | tee -a "$LOG_FILE"
-echo "[INFO] Output CSV: $OUT_CSV"         | tee -a "$LOG_FILE"
-echo "[INFO] Log file: $LOG_FILE"          | tee -a "$LOG_FILE"
+echo "[INFO] Output clips: $OUT_CLIPS"    | tee -a "$LOG_FILE"
+echo "[INFO] Output CSV: $OUT_CSV"        | tee -a "$LOG_FILE"
+echo "[INFO] Log file: $LOG_FILE"         | tee -a "$LOG_FILE"
 
 # Execute preprocessing via srun
 srun python "$PROJECT_ROOT/pipeline/preprocess.py" \
