@@ -1,4 +1,3 @@
-# scripts/run_train.sh
 #!/bin/bash -l
 
 #SBATCH --job-name=train_only
