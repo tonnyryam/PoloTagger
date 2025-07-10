@@ -50,7 +50,7 @@ fi
 mkdir -p "$(dirname "$OUTPUT_MODEL")"
 
 # 8. Run training
-python train.py \
+python pipeline/train.py \
   --csv "$METADATA" \
   --features "$FEATURE_DIR" \
   --out "$OUTPUT_MODEL" \
