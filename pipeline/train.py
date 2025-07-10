@@ -1,5 +1,3 @@
-# train.py
-#!/usr/bin/env python
 import argparse
 import os
 import importlib.util

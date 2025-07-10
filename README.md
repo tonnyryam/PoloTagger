@@ -32,3 +32,5 @@ Initial Features
 3. goals
 4. shots
 5. man-up/down
+
+srun -p gpu --gres=gpu:1 --time 1-00:15:00 --pty bash -l
