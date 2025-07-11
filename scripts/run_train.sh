@@ -68,7 +68,8 @@ fi
 mkdir -p "$(dirname "$OUTPUT_MODEL")"
 
 # 9. Set PYTHONPATH and run training
-export PYTHONPATH="/bigdata/rhome/tfrw2023/Code/PoloTagger:$PYTHONPATH"
+# Initialize PYTHONPATH if it's not already set
+export PYTHONPATH="/bigdata/rhome/tfrw2023/Code/PoloTagger:${PYTHONPATH:-}"
 
 echo "[DEBUG] Current directory: $(pwd)"
 echo "[DEBUG] PYTHONPATH: $PYTHONPATH"
