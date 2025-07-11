@@ -146,7 +146,20 @@ def main():
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
 
     # load YOLO & digit detectors (handles hub downloading)
-    load_detector(args.yolo_model, digit_model_path=args.digit_model)
+    try:
+        load_detector(args.yolo_model, digit_model_path=args.digit_model)
+        print("[INFO] All detectors loaded successfully")
+    except Exception as e:
+        print(f"[WARNING] Detector loading issue: {e}")
+        print("[INFO] Attempting to load YOLO only...")
+        try:
+            load_detector(args.yolo_model, digit_model_path=None)
+            print(
+                "[INFO] YOLO loaded successfully - digit classification will be disabled"
+            )
+        except Exception as e2:
+            print(f"[ERROR] Critical failure loading detectors: {e2}")
+            raise
 
     # prepare datasets & loaders
     train_ds, val_ds = load_train_val_datasets(args.csv, label_list, val_ratio=0.2)
