@@ -67,7 +67,12 @@ fi
 # 8. Create output dir
 mkdir -p "$(dirname "$OUTPUT_MODEL")"
 
-# 9. Run training with direct Python path
+# 9. Set PYTHONPATH and run training
+export PYTHONPATH="/bigdata/rhome/tfrw2023/Code/PoloTagger:$PYTHONPATH"
+
+echo "[DEBUG] Current directory: $(pwd)"
+echo "[DEBUG] PYTHONPATH: $PYTHONPATH"
+
 $PYTHON_PATH pipeline/train.py \
   --csv "$METADATA" \
   --features "$FEATURE_DIR" \
