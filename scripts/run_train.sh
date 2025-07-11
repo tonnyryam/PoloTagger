@@ -16,7 +16,7 @@ date
 hostname
 
 # 2. Set direct path to Python in the PoloTagger environment
-PYTHON_PATH="/bigdata/rhome/tfrw2023/.conda/envs/PoloTagger/bin/python"
+PYTHON_PATH="/bigdata/rhome/tfrw2023/.conda/envs/PoloTagger/bin/python3.10"
 
 # 3. Verify the Python path exists and works
 if [[ ! -f "$PYTHON_PATH" ]]; then
