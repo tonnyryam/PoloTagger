@@ -1,12 +1,13 @@
 import os
 import torch
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 import pandas as pd
 import cv2
 import numpy as np
 from sklearn.model_selection import train_test_split
 from pipeline.augmentations import VideoAugmentation
+
 
 class VideoClipDataset(Dataset):
     def __init__(self, metadata_csv, label_list, clip_len=5, fps=30, transform=None):
@@ -21,22 +22,23 @@ class VideoClipDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.metadata.iloc[idx]
-        video_path = row["video_path"]
+        clip_path = row["clip_path"]
         start_time = float(row["start_time"])
         label_vector = self._get_label_vector(row["labels"])
 
-        frames = self._load_clip(video_path, start_time)
+        frames = self._load_clip(clip_path, start_time)
 
         if self.transform:
             frames = self.transform(frames)
 
-        clip_tensor = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0  # (C, T, H, W)
+        # (C, T, H, W)
+        clip_tensor = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0
         label_tensor = torch.tensor(label_vector, dtype=torch.float32)
 
         return clip_tensor, label_tensor
 
-    def _load_clip(self, video_path, start_time):
-        cap = cv2.VideoCapture(video_path)
+    def _load_clip(self, clip_path, start_time):
+        cap = cv2.VideoCapture(clip_path)
         start_frame = int(start_time * self.fps)
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
@@ -50,7 +52,8 @@ class VideoClipDataset(Dataset):
 
         cap.release()
 
-        if len(frames) < self.clip_len * self.fps:
+        # pad if video shorter than expected
+        if len(frames) < self.clip_len * self.fps and frames:
             pad = self.clip_len * self.fps - len(frames)
             frames.extend([frames[-1]] * pad)
 
@@ -64,6 +67,7 @@ class VideoClipDataset(Dataset):
                 label_vector[self.label_list.index(label)] = 1
         return label_vector
 
+
 def load_train_val_datasets(csv_path, label_list, val_ratio=0.2):
     full_ds = VideoClipDataset(csv_path, label_list)
 
@@ -72,8 +76,8 @@ def load_train_val_datasets(csv_path, label_list, val_ratio=0.2):
     train_len = len(full_ds) - val_len
     train_ds, val_ds = torch.utils.data.random_split(full_ds, [train_len, val_len])
 
-    # Wrap with transform
+    # Apply augmentations
     train_ds.dataset.transform = VideoAugmentation()
-    val_ds.dataset.transform = None  # no aug in validation
+    val_ds.dataset.transform = None
 
     return train_ds, val_ds
