@@ -22,23 +22,22 @@ labels_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(labels_module)
 label_list = labels_module.label_list
 
-# 1. Setup logging
-log_dir = os.path.join(os.getcwd(), "scripts")
+# 1. Setup logging (always point to the repo’s scripts/ folder)
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+log_dir = os.path.join(repo_root, "scripts")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "train.log")
 
 logger = logging.getLogger("PoloTagger")
 logger.setLevel(logging.DEBUG)
+
+# Only file handler—no console handler
 fh = logging.FileHandler(log_file)
 fh.setLevel(logging.DEBUG)
-sh = logging.StreamHandler(sys.stdout)
-sh.setLevel(logging.INFO)
 fmt = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
 fh.setFormatter(fmt)
-sh.setFormatter(fmt)
 if not logger.handlers:
     logger.addHandler(fh)
-    logger.addHandler(sh)
 
 
 def benchmark_loader(ds, bs, n_workers):
@@ -91,6 +90,7 @@ def train_model(
             total_train += total_loss.item() * clips.size(0)
         avg_train = total_train / len(train_loader.dataset)
         logger.info(f"[Epoch {epoch}] Train Loss: {avg_train:.4f}")
+
         # Validation
         model.eval()
         total_val = 0.0

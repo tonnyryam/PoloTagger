@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-gpu=16
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
-#SBATCH --err=scripts/train_%j.err
-#SBATCH --out=scripts/train_%j.out
+#SBATCH --err=train_%j.log
+#SBATCH --out=train_%j.log
 
 # End the script if any command fails
 set -euo pipefail
