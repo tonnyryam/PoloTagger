@@ -1,86 +1,73 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=train_only
-#SBATCH --output=scripts/%x_%j.log
-#SBATCH --error=scripts/%x_%j.log
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --job-name="train_only"\
+#SBATCH --time=2-00:00:00
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=1-00:00:00
+#SBATCH --cpus-per-gpu=16
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
-#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger
+#SBATCH --err=scripts/train_%j.err
+#SBATCH --out=scripts/train_%j.out
 
-# 1. Debug info
+# End the script if any command fails
+set -euo pipefail
+
+# Debug info
 date
 hostname
 
-# 2. Set direct path to Python in the PoloTagger environment
 PYTHON_PATH="/bigdata/rhome/tfrw2023/.conda/envs/PoloTagger/bin/python3.10"
-
-# 3. Verify the Python path exists and works
-if [[ ! -f "$PYTHON_PATH" ]]; then
-    echo "[ERROR] Python not found at: $PYTHON_PATH"
-    echo "[INFO] Checking conda environments..."
-    ls -la /bigdata/rhome/tfrw2023/.conda/envs/
+if [[ ! -x "$PYTHON_PATH" ]]; then
+    echo "[ERROR] Python not found at $PYTHON_PATH"
     exit 1
 fi
 
 echo "[DEBUG] Using Python: $PYTHON_PATH"
 echo "[DEBUG] Python version: $($PYTHON_PATH --version)"
 
-# Test PyTorch import
-$PYTHON_PATH -c "import torch; print(f'[DEBUG] PyTorch version: {torch.__version__}'); print(f'[DEBUG] CUDA available: {torch.cuda.is_available()}')" || {
-    echo "[ERROR] PyTorch import failed"
-    echo "[INFO] Checking installed packages..."
-    $PYTHON_PATH -c "import sys; print('Python executable:', sys.executable)"
-    $PYTHON_PATH -m pip list | grep torch || echo "[INFO] No torch packages found"
-    exit 1
-}
+# Quick PyTorch sanity check
+$PYTHON_PATH - << 'PYCODE'
+import torch
+print(f"[DEBUG] PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
+PYCODE
 
-# 4. Bail on errors or unset vars (after setup)
+# Fail fast on errors
 set -euo pipefail
 
-# 5. Accept optional args for pretrained models (default to yolov5s & mnist-onnx)
+# Models (positional args, defaults shown)
 YOLO_MODEL="${1:-yolov5s.pt}"
 DIGIT_MODEL="${2:-mnist-onnx}"
 
-echo "[INFO] Training only – pulling weights as needed"
-echo "[INFO]   YOLO model specifier:  $YOLO_MODEL"
-echo "[INFO]   Digit model specifier: $DIGIT_MODEL"
+echo "[INFO] YOLO model:  $YOLO_MODEL"
+echo "[INFO] Digit model: $DIGIT_MODEL"
 
-# 6. Paths
+# Paths
 METADATA="data/metadata/clip_index.csv"
 FEATURE_DIR="features"
 OUTPUT_MODEL="models/r3d_18_final.pth"
 
-# 7. Verify inputs exist
-if [[ ! -f "$METADATA" ]]; then
-  echo "[ERROR] Metadata CSV not found: $METADATA"
-  exit 1
-fi
-if [[ ! -d "$FEATURE_DIR" ]]; then
-  echo "[ERROR] Features directory not found: $FEATURE_DIR"
-  exit 1
-fi
+# 7. Verify inputs
+[[ -f "$METADATA" ]]    || { echo "[ERROR] Missing CSV: $METADATA";    exit 1; }
+[[ -d "$FEATURE_DIR" ]] || { echo "[ERROR] Missing features dir: $FEATURE_DIR"; exit 1; }
 
-# 8. Create output dir
+# Ensure output folder exists
 mkdir -p "$(dirname "$OUTPUT_MODEL")"
 
-# 9. Set PYTHONPATH and run training
-# Initialize PYTHONPATH if it's not already set
+# Run training (add --benchmark-data if you want the 10-batch timing)
 export PYTHONPATH="/bigdata/rhome/tfrw2023/Code/PoloTagger:${PYTHONPATH:-}"
-
-echo "[DEBUG] Current directory: $(pwd)"
+echo "[DEBUG] CWD: $(pwd)"
 echo "[DEBUG] PYTHONPATH: $PYTHONPATH"
 
 $PYTHON_PATH pipeline/train.py \
-  --csv "$METADATA" \
+  --csv    "$METADATA" \
   --features "$FEATURE_DIR" \
-  --out "$OUTPUT_MODEL" \
+  --out    "$OUTPUT_MODEL" \
   --epochs 10 \
   --batch_size 8 \
   --yolo_model "$YOLO_MODEL" \
-  --digit_model "$DIGIT_MODEL"
+  --digit_model "$DIGIT_MODEL" \
+  "${@:3}"
 
-echo "[INFO] Training complete, model saved to $OUTPUT_MODEL"
+echo "[INFO] Training complete; model saved to $OUTPUT_MODEL"
