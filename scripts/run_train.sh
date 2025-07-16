@@ -1,8 +1,8 @@
 #!/bin/bash -l
-#SBATCH --job-name=train_polo_tagger
-#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger     # ensure cwd is repo root
-#SBATCH --output=scripts/train.log      # unified stdout+stderr
-#SBATCH --error=scripts/train.log
+#SBATCH --job-name=train_polo_%j
+#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger
+#SBATCH --output=scripts/train_%j.log
+#SBATCH --error=scripts/train_%j.log
 #SBATCH --time=2-00:00:00
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
@@ -11,12 +11,13 @@
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
 
-# Fail on any error
 set -euo pipefail
 
-# Debug info (goes into scripts/train.log)
+# Shell‐level debug
 date
 hostname
+echo "[INFO] SLURM_JOB_ID=$SLURM_JOB_ID"
+echo "[INFO] Job name: $SLURM_JOB_NAME"
 
 # Use the correct Python interpreter
 PYTHON_PATH="/bigdata/rhome/tfrw2023/.conda/envs/PoloTagger/bin/python3.10"

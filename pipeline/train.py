@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# pipeline/train.py
+
 import argparse
 import os
 import sys
@@ -5,6 +8,7 @@ import time
 import logging
 import multiprocessing
 import importlib.util
+import socket
 
 import torch
 import torch.nn as nn
@@ -16,29 +20,35 @@ from pipeline.dataset import load_train_val_datasets
 from features.cap_number.identifier import load_detector
 
 # --- Determine repository root and load labels dynamically ---
-# Option 2: compute repo_root relative to this file, not cwd
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 labels_path = os.path.join(repo_root, "data", "metadata", "labels.py")
 spec = importlib.util.spec_from_file_location("labels", labels_path)
-labels_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(labels_module)
-label_list = labels_module.label_list
+labels_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(labels_mod)
+label_list = labels_mod.label_list
 
-# --- Setup logging (always to repo’s scripts/train.log) ---
-log_dir = os.path.join(repo_root, "scripts")
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, "train.log")
-
+# --- Setup logging to stdout only ---
 logger = logging.getLogger("PoloTagger")
 logger.setLevel(logging.DEBUG)
 
-# Only file handler—all logs go into train.log
-fh = logging.FileHandler(log_file)
-fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-fh.setFormatter(formatter)
+sh = logging.StreamHandler(sys.stdout)
+sh.setLevel(logging.DEBUG)
+sh.setFormatter(formatter)
+
+# Avoid duplicate handlers
 if not logger.handlers:
-    logger.addHandler(fh)
+    logger.addHandler(sh)
+
+# --- Log initial debug info ---
+logger.info(f"SLURM_JOB_ID={os.environ.get('SLURM_JOB_ID', 'N/A')}")
+logger.info(f"HOSTNAME={socket.gethostname()}")
+logger.debug(
+    f"Python executable: {sys.executable}, version: {sys.version.replace(chr(10), ' ')}"
+)
+logger.debug(
+    f"PyTorch version: {torch.__version__}, CUDA available: {torch.cuda.is_available()}"
+)
 
 
 def benchmark_loader(ds, bs, n_workers):
@@ -138,7 +148,7 @@ def main():
         logger.error(f"Feature initialization failed: {e}")
         sys.exit(1)
 
-    # Validate CSV and features
+    # Validate CSV and features dir
     if not os.path.isfile(args.csv):
         logger.error(f"Metadata CSV not found: {args.csv}")
         sys.exit(1)
@@ -151,8 +161,10 @@ def main():
     n_cpus = multiprocessing.cpu_count()
     n_workers = max(1, n_cpus - 1)
     logger.info(f"Detected {n_cpus} CPU cores → using {n_workers} workers")
+
     if args.benchmark_data:
         benchmark_loader(train_ds, args.batch_size, n_workers)
+
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -170,13 +182,14 @@ def main():
         persistent_workers=True,
     )
 
-    # Build and train model
+    # Build & train the model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = r3d_18(pretrained=True)
     model.fc = nn.Linear(model.fc.in_features, len(label_list))
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
+
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss()
     feature_trainers = [load_detector]
