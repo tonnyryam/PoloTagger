@@ -10,6 +10,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --err=train_%j.log
 #SBATCH --out=train_%j.log
+#SBATCH --chdir=/bigdata/rhome/tfrw2023/Code/PoloTagger
 
 # End the script if any command fails
 set -euo pipefail
