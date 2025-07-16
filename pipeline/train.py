@@ -15,15 +15,16 @@ from torchvision.models.video import r3d_18
 from pipeline.dataset import load_train_val_datasets
 from features.cap_number.identifier import load_detector
 
-# --- Load labels dynamically from data/metadata/labels.py ---
-labels_path = os.path.join(os.getcwd(), "data", "metadata", "labels.py")
+# --- Determine repository root and load labels dynamically ---
+# Option 2: compute repo_root relative to this file, not cwd
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+labels_path = os.path.join(repo_root, "data", "metadata", "labels.py")
 spec = importlib.util.spec_from_file_location("labels", labels_path)
 labels_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(labels_module)
 label_list = labels_module.label_list
 
-# 1. Setup logging (always point to the repo’s scripts/ folder)
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+# --- Setup logging (always to repo’s scripts/train.log) ---
 log_dir = os.path.join(repo_root, "scripts")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "train.log")
@@ -31,11 +32,11 @@ log_file = os.path.join(log_dir, "train.log")
 logger = logging.getLogger("PoloTagger")
 logger.setLevel(logging.DEBUG)
 
-# Only file handler—no console handler
+# Only file handler—all logs go into train.log
 fh = logging.FileHandler(log_file)
 fh.setLevel(logging.DEBUG)
-fmt = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-fh.setFormatter(fmt)
+formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+fh.setFormatter(formatter)
 if not logger.handlers:
     logger.addHandler(fh)
 
