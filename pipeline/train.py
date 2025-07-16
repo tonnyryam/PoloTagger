@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# pipeline/train.py
-
 import argparse
 import os
 import sys
@@ -30,13 +27,10 @@ label_list = labels_mod.label_list
 # --- Setup logging to stdout only ---
 logger = logging.getLogger("PoloTagger")
 logger.setLevel(logging.DEBUG)
-
 formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
 sh = logging.StreamHandler(sys.stdout)
 sh.setLevel(logging.DEBUG)
 sh.setFormatter(formatter)
-
-# Avoid duplicate handlers
 if not logger.handlers:
     logger.addHandler(sh)
 
@@ -51,6 +45,7 @@ logger.debug(
 )
 
 
+# --- Benchmark loader ---
 def benchmark_loader(ds, bs, n_workers):
     """Load 10 batches and log the average seconds per batch, then exit."""
     loader = DataLoader(
@@ -71,6 +66,7 @@ def benchmark_loader(ds, bs, n_workers):
     sys.exit(0)
 
 
+# --- Training loop ---
 def train_model(
     model,
     train_loader,
@@ -102,7 +98,6 @@ def train_model(
         avg_train = total_train / len(train_loader.dataset)
         logger.info(f"[Epoch {epoch}] Train Loss: {avg_train:.4f}")
 
-        # Validation
         model.eval()
         total_val = 0.0
         with torch.no_grad():
@@ -115,6 +110,7 @@ def train_model(
         logger.info(f"[Epoch {epoch}]   Val Loss: {avg_val:.4f}")
 
 
+# --- Main ---
 def main():
     parser = argparse.ArgumentParser(description="Train PoloTagger model.")
     parser.add_argument(
@@ -139,7 +135,7 @@ def main():
     )
     args = parser.parse_args()
 
-    # Detector loading: feature modules handle their own downloads
+    # Detector loading
     logger.info("Initializing cap_number feature detectors...")
     try:
         load_detector()
@@ -148,7 +144,7 @@ def main():
         logger.error(f"Feature initialization failed: {e}")
         sys.exit(1)
 
-    # Validate CSV and features dir
+    # Validate inputs
     if not os.path.isfile(args.csv):
         logger.error(f"Metadata CSV not found: {args.csv}")
         sys.exit(1)
@@ -156,15 +152,27 @@ def main():
         logger.error(f"Features dir not found: {args.features}")
         sys.exit(1)
 
-    # Prepare datasets & loaders
-    train_ds, val_ds = load_train_val_datasets(args.csv, label_list, val_ratio=0.2)
-    n_cpus = multiprocessing.cpu_count()
+    # Determine CPU count (respecting SLURM allocation if available)
+    slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm_cpus is not None:
+        try:
+            n_cpus = int(slurm_cpus)
+            logger.info(f"SLURM_CPUS_PER_TASK={n_cpus}")
+        except ValueError:
+            n_cpus = multiprocessing.cpu_count()
+            logger.warning(
+                f"Invalid SLURM_CPUS_PER_TASK={slurm_cpus}, falling back to {n_cpus}"
+            )
+    else:
+        n_cpus = multiprocessing.cpu_count()
+        logger.info(f"Detected system CPU count: {n_cpus}")
     n_workers = max(1, n_cpus - 1)
-    logger.info(f"Detected {n_cpus} CPU cores → using {n_workers} workers")
+    logger.info(f"Using {n_workers} DataLoader workers (n_cpus={n_cpus})")
 
+    # Prepare data loaders
+    train_ds, val_ds = load_train_val_datasets(args.csv, label_list, val_ratio=0.2)
     if args.benchmark_data:
         benchmark_loader(train_ds, args.batch_size, n_workers)
-
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -182,7 +190,7 @@ def main():
         persistent_workers=True,
     )
 
-    # Build & train the model
+    # Build model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = r3d_18(pretrained=True)
     model.fc = nn.Linear(model.fc.in_features, len(label_list))
@@ -194,6 +202,7 @@ def main():
     criterion = nn.CrossEntropyLoss()
     feature_trainers = [load_detector]
 
+    # Train
     train_model(
         model,
         train_loader,
@@ -206,7 +215,7 @@ def main():
         num_epochs=args.epochs,
     )
 
-    # Save final model
+    # Save
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     torch.save(model.state_dict(), args.out)
     logger.info(f"Model saved to {args.out}")
