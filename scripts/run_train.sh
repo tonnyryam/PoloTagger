@@ -7,7 +7,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --cpus-per-gpu=16
+#SBATCH --cpus-per-task=16
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
 
