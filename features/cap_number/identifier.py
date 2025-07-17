@@ -72,7 +72,6 @@ def ensure_mnist_model():
     model_dir = base_dir / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    # Official PyTorch example MNIST weights
     mnist_url = "https://github.com/pytorch/examples/raw/main/mnist/mnist_cnn.pt"
     mnist_path = model_dir / "mnist_digit_classifier.pt"
     download_if_missing(mnist_url, mnist_path)
@@ -105,7 +104,6 @@ def load_detector():
     classifier = DigitClassifier()
     try:
         state = torch.load(mnist_model_path, map_location="cpu")
-        # handle state dicts wrapped under 'model' key
         if isinstance(state, dict) and "model" in state:
             state = state["model"]
         classifier.load_state_dict(state)
@@ -141,8 +139,7 @@ def identify_numbers_in_frame(frame, model=None):
             try:
                 x = digit_transform(crop).unsqueeze(0)
                 with torch.no_grad():
-                    out = classifier(x)
-                    number = int(out.argmax())
+                    number = int(classifier(x).argmax())
             except Exception:
                 number = None
         if number is None:

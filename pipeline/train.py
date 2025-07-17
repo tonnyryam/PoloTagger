@@ -14,15 +14,16 @@ from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18
 
 from pipeline.dataset import load_train_val_datasets
-from features.cap_number.identifier import load_detector
+from features.cap_number.identifier import load_detector, classifier
+from features.cap_number.train import add_feature_training
 
 # --- Determine repository root and load labels dynamically ---
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+repo_root   = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 labels_path = os.path.join(repo_root, "data", "metadata", "labels.py")
-spec = importlib.util.spec_from_file_location("labels", labels_path)
-labels_mod = importlib.util.module_from_spec(spec)
+spec        = importlib.util.spec_from_file_location("labels", labels_path)
+labels_mod  = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(labels_mod)
-label_list = labels_mod.label_list
+label_list  = labels_mod.label_list
 
 # --- Setup logging to stdout only ---
 logger = logging.getLogger("PoloTagger")
@@ -37,25 +38,14 @@ if not logger.handlers:
 # --- Log initial debug info ---
 logger.info(f"SLURM_JOB_ID={os.environ.get('SLURM_JOB_ID', 'N/A')}")
 logger.info(f"HOSTNAME={socket.gethostname()}")
-logger.debug(
-    f"Python executable: {sys.executable}, version: {sys.version.replace(chr(10), ' ')}"
-)
-logger.debug(
-    f"PyTorch version: {torch.__version__}, CUDA available: {torch.cuda.is_available()}"
-)
+logger.debug(f"Python executable: {sys.executable}, version: {sys.version.replace(chr(10), ' ')}")
+logger.debug(f"PyTorch version: {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
 
-
-# --- Benchmark loader ---
 def benchmark_loader(ds, bs, n_workers):
     """Load 10 batches and log the average seconds per batch, then exit."""
-    loader = DataLoader(
-        ds,
-        batch_size=bs,
-        shuffle=True,
-        num_workers=n_workers,
-        pin_memory=True,
-        persistent_workers=True,
-    )
+    loader = DataLoader(ds, batch_size=bs, shuffle=True,
+                        num_workers=n_workers, pin_memory=True,
+                        persistent_workers=True)
     logger.debug(f"[BENCH] batch_size={bs}, num_workers={n_workers}")
     t0 = time.time()
     for i, (clips, labels) in enumerate(loader):
@@ -65,19 +55,8 @@ def benchmark_loader(ds, bs, n_workers):
     logger.debug(f"[BENCH] ≈{avg:.3f}s per batch over 10 batches")
     sys.exit(0)
 
-
-# --- Training loop ---
-def train_model(
-    model,
-    train_loader,
-    val_loader,
-    criterion,
-    optimizer,
-    device,
-    feature_trainers,
-    label_list,
-    num_epochs,
-):
+def train_model(model, train_loader, val_loader, criterion,
+                optimizer, device, feature_trainers, label_list, num_epochs):
     for epoch in range(1, num_epochs + 1):
         logger.info(f"Starting epoch {epoch}/{num_epochs}")
         model.train()
@@ -86,15 +65,13 @@ def train_model(
             clips, labels = clips.to(device), labels.to(device)
             outputs = model(clips)
             loss = criterion(outputs, labels)
-            penalty = sum(
-                trainer(model, clips, labels, label_list)
-                for trainer in feature_trainers
-            )
-            total_loss = loss + penalty
+            penalty = sum(trainer(model, clips, labels, label_list)
+                          for trainer in feature_trainers)
+            total = loss + penalty
             optimizer.zero_grad()
-            total_loss.backward()
+            total.backward()
             optimizer.step()
-            total_train += total_loss.item() * clips.size(0)
+            total_train += total.item() * clips.size(0)
         avg_train = total_train / len(train_loader.dataset)
         logger.info(f"[Epoch {epoch}] Train Loss: {avg_train:.4f}")
 
@@ -109,40 +86,32 @@ def train_model(
         avg_val = total_val / len(val_loader.dataset)
         logger.info(f"[Epoch {epoch}]   Val Loss: {avg_val:.4f}")
 
-
-# --- Main ---
 def main():
     parser = argparse.ArgumentParser(description="Train PoloTagger model.")
-    parser.add_argument(
-        "--csv", default="data/metadata/clip_index.csv", help="Path to metadata CSV"
-    )
-    parser.add_argument(
-        "--features", default="features", help="Directory containing features"
-    )
-    parser.add_argument(
-        "--out",
-        default="models/r3d_18_final.pth",
-        help="Output path for the trained model",
-    )
-    parser.add_argument(
-        "--epochs", type=int, default=10, help="Number of training epochs"
-    )
-    parser.add_argument("--batch_size", type=int, default=8, help="Training batch size")
-    parser.add_argument(
-        "--benchmark-data",
-        action="store_true",
-        help="Run DataLoader timing (10 batches) and exit",
-    )
+    parser.add_argument("--csv",         default="data/metadata/clip_index.csv",
+                        help="Path to metadata CSV")
+    parser.add_argument("--features",    default="features",
+                        help="Directory containing features")
+    parser.add_argument("--out",         default="models/r3d_18_final.pth",
+                        help="Output path for the trained model")
+    parser.add_argument("--epochs",      type=int, default=10,
+                        help="Number of training epochs")
+    parser.add_argument("--batch_size",  type=int, default=8,
+                        help="Training batch size")
+    parser.add_argument("--benchmark-data", action="store_true",
+                        help="Run DataLoader timing and exit")
     args = parser.parse_args()
 
-    # Detector loading
+    # Initialize detectors once
     logger.info("Initializing cap_number feature detectors...")
-    try:
-        load_detector()
-        logger.info("cap_number feature ready")
-    except Exception as e:
-        logger.error(f"Feature initialization failed: {e}")
+    det = load_detector()
+    if det is None:
+        logger.error("cap_number YOLO failed to initialize—aborting.")
         sys.exit(1)
+    if classifier is None:
+        logger.error("cap_number digit classifier failed to initialize—aborting.")
+        sys.exit(1)
+    logger.info("cap_number feature ready")
 
     # Validate inputs
     if not os.path.isfile(args.csv):
@@ -152,43 +121,31 @@ def main():
         logger.error(f"Features dir not found: {args.features}")
         sys.exit(1)
 
-    # Determine CPU count (respecting SLURM allocation if available)
+    # CPU/worker setup
     slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK")
-    if slurm_cpus is not None:
+    if slurm_cpus:
         try:
             n_cpus = int(slurm_cpus)
             logger.info(f"SLURM_CPUS_PER_TASK={n_cpus}")
         except ValueError:
             n_cpus = multiprocessing.cpu_count()
-            logger.warning(
-                f"Invalid SLURM_CPUS_PER_TASK={slurm_cpus}, falling back to {n_cpus}"
-            )
+            logger.warning(f"Invalid SLURM_CPUS_PER_TASK, using {n_cpus}")
     else:
         n_cpus = multiprocessing.cpu_count()
-        logger.info(f"Detected system CPU count: {n_cpus}")
+        logger.info(f"Detected CPU count: {n_cpus}")
     n_workers = max(1, n_cpus - 1)
-    logger.info(f"Using {n_workers} DataLoader workers (n_cpus={n_cpus})")
+    logger.info(f"Using {n_workers} DataLoader workers")
 
-    # Prepare data loaders
+    # Data loaders
     train_ds, val_ds = load_train_val_datasets(args.csv, label_list, val_ratio=0.2)
     if args.benchmark_data:
         benchmark_loader(train_ds, args.batch_size, n_workers)
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=n_workers,
-        pin_memory=True,
-        persistent_workers=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=n_workers,
-        pin_memory=True,
-        persistent_workers=True,
-    )
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                              shuffle=True, num_workers=n_workers,
+                              pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size,
+                            shuffle=False, num_workers=n_workers,
+                            pin_memory=True, persistent_workers=True)
 
     # Build model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -200,26 +157,17 @@ def main():
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss()
-    feature_trainers = [load_detector]
+    feature_trainers = [add_feature_training]
 
-    # Train
-    train_model(
-        model,
-        train_loader,
-        val_loader,
-        criterion,
-        optimizer,
-        device,
-        feature_trainers,
-        label_list,
-        num_epochs=args.epochs,
-    )
+    # Train!
+    train_model(model, train_loader, val_loader, criterion,
+                optimizer, device, feature_trainers,
+                label_list, num_epochs=args.epochs)
 
-    # Save
+    # Save final model
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     torch.save(model.state_dict(), args.out)
     logger.info(f"Model saved to {args.out}")
-
 
 if __name__ == "__main__":
     main()
