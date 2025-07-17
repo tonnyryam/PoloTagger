@@ -1,129 +1,142 @@
+# features/cap_number/identifier.py
+"""
+This module initializes and provides functions for detecting numbered caps in video frames.
+It downloads and loads pretrained YOLOv8n and MNIST digit-recognition models into its own models/ directory.
+"""
+
 import cv2
-import numpy as np
 from ultralytics import YOLO
-import torch
-import torch.nn as nn
+import onnxruntime as ort
 import torchvision.transforms as T
-import urllib.request
 from pathlib import Path
+import urllib.request
 
+# Globals for detector and digit session
 cap_detector = None
-classifier   = None
+digit_session = None
 
-transform = T.Compose([
-    T.ToPILImage(),
-    T.Grayscale(),
-    T.Resize((28, 28)),
-    T.ToTensor(),
-    T.Normalize((0.5,), (0.5,)),
-])
+# Transform for digit classifier input
+digit_transform = T.Compose(
+    [
+        T.ToPILImage(),
+        T.Grayscale(),
+        T.Resize((28, 28)),
+        T.ToTensor(),
+        T.Normalize((0.5,), (0.5,)),
+    ]
+)
 
-class DigitClassifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 32, 3, 1, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, 3, 1, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Flatten(),
-            nn.Linear(64 * 7 * 7, 128),
-            nn.ReLU(),
-            nn.Linear(128, 10),
-        )
 
-    def forward(self, x):
-        return self.net(x)
+class ONNXDigitClassifier:
+    """Wraps an ONNX Runtime session for MNIST classification."""
+
+    def __init__(self, model_path: str):
+        self.session = ort.InferenceSession(model_path)
+        # assume input name is first input\
+        self.input_name = self.session.get_inputs()[0].name
+
+    def __call__(self, crop):
+        # Preprocess crop and run inference
+        x = digit_transform(crop).unsqueeze(0).numpy()
+        outputs = self.session.run(None, {self.input_name: x})[0]
+        return int(outputs.argmax())
+
+
+def download_if_missing(url: str, dest: Path):
+    """Download a file from URL to dest if not already present."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest.exists():
+        print(f"[cap_number] Downloading {url} to {dest}")
+        try:
+            urllib.request.urlretrieve(url, str(dest))
+        except Exception as e:
+            print(f"[cap_number] WARNING: failed to download {url}: {e}")
 
 
 def ensure_pretrained_models():
     """
-    Download YOLOv8n and MNIST digit CNN weights into this feature's models/ directory.
-    Returns paths to the downloaded files.
+    Ensure that both YOLOv8n and MNIST ONNX models are available locally.
+    Returns paths for the digit ONNX model; YOLO weights are managed by the Ultralytics library.
     """
     base_dir = Path(__file__).parent
-    model_dir = base_dir / 'models'
+    model_dir = base_dir / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    # YOLOv8n weights
-    yolo_path = model_dir / 'yolov8n.pt'
-    if not yolo_path.exists():
-        yolo_url = 'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt'
-        urllib.request.urlretrieve(yolo_url, yolo_path)
+    # Download MNIST ONNX model if missing
+    onnx_url = (
+        "https://raw.githubusercontent.com/onnx/models/main/vision/classification/"
+        "mnist/model/mnist-8.onnx"
+    )
+    onnx_path = model_dir / "mnist-8.onnx"
+    download_if_missing(onnx_url, onnx_path)
 
-    # MNIST CNN weights (PyTorch example)
-    digit_path = model_dir / 'mnist_digit_classifier.pt'
-    if not digit_path.exists():
-        mnist_url = 'https://github.com/pytorch/examples/raw/main/mnist/mnist_cnn.pt'
-        urllib.request.urlretrieve(mnist_url, digit_path)
-
-    return str(yolo_path), str(digit_path)
+    return str(onnx_path)
 
 
 def load_detector():
     """
-    Initialize YOLO and digit classifier models, downloading weights if needed.
+    Initialize the YOLO detector and MNIST digit classifier.
+    Downloads weights into features/cap_number/models/ if needed.
+    Returns the YOLO detector.
     """
-    global cap_detector, classifier
+    global cap_detector, digit_session
 
-    yolo_model_path, digit_model_path = ensure_pretrained_models()
-
-    # Load YOLO detector
-    cap_detector = YOLO(yolo_model_path)
-    print(f"[cap_number] YOLO detector loaded from {yolo_model_path}")
-
-    # Load digit classifier
-    classifier = DigitClassifier()
+    # 1) Instantiate YOLOv8n detector (auto-download by library)
     try:
-        state = torch.load(digit_model_path, map_location='cpu')
-        classifier.load_state_dict(state)
-        classifier.eval()
-        print(f"[cap_number] Digit classifier loaded from {digit_model_path}")
+        cap_detector = YOLO("yolov8n")
+        print(f"[cap_number] YOLO detector loaded (yolov8n)")
     except Exception as e:
-        print(f"[cap_number] Failed to load digit classifier: {e}")
+        print(f"[cap_number] ERROR initializing YOLO detector: {e}")
+        cap_detector = None
+
+    # 2) Ensure and load MNIST ONNX classifier
+    onnx_model_path = ensure_pretrained_models()
+    try:
+        digit_session = ONNXDigitClassifier(onnx_model_path)
+        print(f"[cap_number] Digit classifier loaded from {Path(onnx_model_path).name}")
+    except Exception as e:
+        print(f"[cap_number] WARNING loading digit classifier: {e}")
+        digit_session = None
 
     return cap_detector
 
 
-def recognize_number(crop):
-    if classifier is None:
-        return None
-    try:
-        x = transform(crop).unsqueeze(0)
-        with torch.no_grad():
-            out = classifier(x)
-            pred = torch.argmax(out, dim=1).item()
-        return pred
-    except Exception:
-        return None
-
-
 def identify_numbers_in_frame(frame, model=None):
+    """
+    Detects caps in the frame using YOLO and reads digits using the ONNX classifier.
+    Returns a dict with keys 'W', 'D', and 'meta'.
+    """
     if model is None:
         model = cap_detector
     if model is None:
-        raise RuntimeError("Detector not initialized")
+        raise RuntimeError("cap_number: YOLO detector not initialized")
 
+    # Run YOLO detection
     results = model(frame)[0]
     detections = []
 
     for box in results.boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         crop = frame[y1:y2, x1:x2]
-        number = recognize_number(crop)
+        number = None
+        if digit_session:
+            try:
+                number = digit_session(crop)
+            except:
+                number = None
         if number is None:
             continue
 
+        # Compute brightness for sorting
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        avg_v = hsv[..., 2].mean()
-        detections.append({'number': number, 'avg_v': avg_v})
+        avg_v = float(hsv[..., 2].mean())
+        detections.append({"number": number, "avg_v": avg_v})
 
-    sorted_caps = sorted(detections, key=lambda d: d['avg_v'])
-    split = len(sorted_caps) // 2
+    # Sort and split
+    det_sorted = sorted(detections, key=lambda d: d["avg_v"])
+    mid = len(det_sorted) // 2
     return {
-        'W': [d['number'] for d in sorted_caps[split:]],
-        'D': [d['number'] for d in sorted_caps[:split]],
-        'meta': sorted_caps,
+        "W": [d["number"] for d in det_sorted[mid:]],
+        "D": [d["number"] for d in det_sorted[:mid]],
+        "meta": det_sorted,
     }
