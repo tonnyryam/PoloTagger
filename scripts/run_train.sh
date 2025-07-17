@@ -56,6 +56,6 @@ $PYTHON_PATH pipeline/train.py \
   --out        "$OUTPUT_MODEL" \
   --epochs     10 \
   --batch_size 8 \
-  --benchmark-data    # remove this if you don’t want the quick 10-batch timing
+  # --benchmark-data    # remove this if you don’t want the quick 10-batch timing
 
 echo "[INFO] Training complete; model saved to $OUTPUT_MODEL"
