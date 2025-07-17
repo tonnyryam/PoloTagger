@@ -1,7 +1,8 @@
 # features/cap_number/identifier.py
 """
 This module initializes and provides functions for detecting numbered caps in video frames.
-It downloads and loads pretrained YOLOv8n and MNIST digit-recognition models into its own models/ directory.
+It checks for pretrained YOLOv8n and MNIST ONNX models in its own models/ directory
+and only downloads them if they are missing.
 """
 
 import cv2
@@ -11,7 +12,7 @@ import torchvision.transforms as T
 from pathlib import Path
 import urllib.request
 
-# Globals for detector and digit session
+# Globals for detector and digit ONNX session
 cap_detector = None
 digit_session = None
 
@@ -27,21 +28,6 @@ digit_transform = T.Compose(
 )
 
 
-class ONNXDigitClassifier:
-    """Wraps an ONNX Runtime session for MNIST classification."""
-
-    def __init__(self, model_path: str):
-        self.session = ort.InferenceSession(model_path)
-        # assume input name is first input\
-        self.input_name = self.session.get_inputs()[0].name
-
-    def __call__(self, crop):
-        # Preprocess crop and run inference
-        x = digit_transform(crop).unsqueeze(0).numpy()
-        outputs = self.session.run(None, {self.input_name: x})[0]
-        return int(outputs.argmax())
-
-
 def download_if_missing(url: str, dest: Path):
     """Download a file from URL to dest if not already present."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -49,53 +35,56 @@ def download_if_missing(url: str, dest: Path):
         print(f"[cap_number] Downloading {url} to {dest}")
         try:
             urllib.request.urlretrieve(url, str(dest))
+            print(f"[cap_number] Download complete: {dest.name}")
         except Exception as e:
             print(f"[cap_number] WARNING: failed to download {url}: {e}")
 
 
-def ensure_pretrained_models():
+def ensure_mnist_onnx_model():
     """
-    Ensure that both YOLOv8n and MNIST ONNX models are available locally.
-    Returns paths for the digit ONNX model; YOLO weights are managed by the Ultralytics library.
+    Ensure that the MNIST ONNX model is available locally.
+    Returns path to the ONNX model file.
     """
     base_dir = Path(__file__).parent
     model_dir = base_dir / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download MNIST ONNX model if missing
+    # Use ONNX Model Zoo path
     onnx_url = (
-        "https://raw.githubusercontent.com/onnx/models/main/vision/classification/"
+        "https://github.com/onnx/models/raw/main/validated/vision/classification/"
         "mnist/model/mnist-8.onnx"
     )
     onnx_path = model_dir / "mnist-8.onnx"
     download_if_missing(onnx_url, onnx_path)
-
     return str(onnx_path)
 
 
 def load_detector():
     """
-    Initialize the YOLO detector and MNIST digit classifier.
+    Initialize the YOLOv8n detector and MNIST ONNX digit classifier.
     Downloads weights into features/cap_number/models/ if needed.
-    Returns the YOLO detector.
+    Returns the YOLO detector instance.
     """
     global cap_detector, digit_session
+    model_dir = Path(__file__).parent / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) Instantiate YOLOv8n detector (auto-download by library)
-    try:
-        cap_detector = YOLO("yolov8n")
-        print(f"[cap_number] YOLO detector loaded (yolov8n)")
-    except Exception as e:
-        print(f"[cap_number] ERROR initializing YOLO detector: {e}")
-        cap_detector = None
+    # 1) YOLOv8n detector
+    yolo_local = model_dir / "yolov8n.pt"
+    if yolo_local.exists():
+        cap_detector = YOLO(str(yolo_local))
+        print(f"[cap_number] YOLO detector loaded from local {yolo_local.name}")
+    else:
+        cap_detector = YOLO("yolov8n")  # auto-downloads to cache
+        print(f"[cap_number] YOLO detector loaded (auto-downloaded)")
 
-    # 2) Ensure and load MNIST ONNX classifier
-    onnx_model_path = ensure_pretrained_models()
+    # 2) MNIST ONNX classifier
+    onnx_model_path = ensure_mnist_onnx_model()
     try:
-        digit_session = ONNXDigitClassifier(onnx_model_path)
+        digit_session = ort.InferenceSession(onnx_model_path)
         print(f"[cap_number] Digit classifier loaded from {Path(onnx_model_path).name}")
     except Exception as e:
-        print(f"[cap_number] WARNING loading digit classifier: {e}")
+        print(f"[cap_number] WARNING: failed to load ONNX digit model: {e}")
         digit_session = None
 
     return cap_detector
@@ -104,14 +93,13 @@ def load_detector():
 def identify_numbers_in_frame(frame, model=None):
     """
     Detects caps in the frame using YOLO and reads digits using the ONNX classifier.
-    Returns a dict with keys 'W', 'D', and 'meta'.
+    Returns a dict: {'W': [...], 'D': [...], 'meta': [...]}.
     """
     if model is None:
         model = cap_detector
     if model is None:
         raise RuntimeError("cap_number: YOLO detector not initialized")
 
-    # Run YOLO detection
     results = model(frame)[0]
     detections = []
 
@@ -121,22 +109,24 @@ def identify_numbers_in_frame(frame, model=None):
         number = None
         if digit_session:
             try:
-                number = digit_session(crop)
-            except:
+                x = digit_transform(crop).unsqueeze(0).numpy()
+                out = digit_session.run(None, {digit_session.get_inputs()[0].name: x})[
+                    0
+                ]
+                number = int(out.argmax())
+            except Exception:
                 number = None
         if number is None:
             continue
 
-        # Compute brightness for sorting
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
         avg_v = float(hsv[..., 2].mean())
         detections.append({"number": number, "avg_v": avg_v})
 
-    # Sort and split
-    det_sorted = sorted(detections, key=lambda d: d["avg_v"])
-    mid = len(det_sorted) // 2
+    sorted_caps = sorted(detections, key=lambda d: d["avg_v"])
+    mid = len(sorted_caps) // 2
     return {
-        "W": [d["number"] for d in det_sorted[mid:]],
-        "D": [d["number"] for d in det_sorted[:mid]],
-        "meta": det_sorted,
+        "W": [d["number"] for d in sorted_caps[mid:]],
+        "D": [d["number"] for d in sorted_caps[:mid]],
+        "meta": sorted_caps,
     }
