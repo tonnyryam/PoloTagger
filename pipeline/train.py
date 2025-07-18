@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18
 
 from pipeline.dataset import load_train_val_datasets
-from features.cap_number.identifier import load_detector, classifier
+import features.cap_number.identifier as cap_identifier  # was: from features.cap_number.identifier import load_detector, classifier
 from features.cap_number.train_cap_number import add_feature_training
 
 # --- Determine repository root and load labels dynamically ---
@@ -132,12 +132,12 @@ def main():
     args = parser.parse_args()
 
     # Initialize detectors once
-    logger.info("Initializing cap_number feature detectors...")
-    det = load_detector()
+    logger.info("Initializing cap_number feature detectors.")
+    det = cap_identifier.load_detector()
     if det is None:
         logger.error("cap_number YOLO failed to initialize—aborting.")
         sys.exit(1)
-    if classifier is None:
+    if cap_identifier.classifier is None:
         logger.error("cap_number digit classifier failed to initialize—aborting.")
         sys.exit(1)
     logger.info("cap_number feature ready")
