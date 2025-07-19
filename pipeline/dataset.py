@@ -1,114 +1,104 @@
-# pipeline/dataset.py
-
-import os
-import torch
-from torch.utils.data import Dataset
 import pandas as pd
-import cv2
-import numpy as np
-from pipeline.augmentations import VideoAugmentation
-
-
-class VideoClipDataset(Dataset):
-    def __init__(self, metadata_csv, label_list, clip_len=5, fps=30, transform=None):
-        """
-        metadata_csv: path to CSV with columns
-          clip_path,label,start_frame,end_frame,source_video
-        label_list:  list of possible labels (strings)
-        clip_len:    number of seconds to load per clip
-        fps:         frames per second
-        transform:   optional callable on raw frame numpy array
-        """
-        self.metadata = pd.read_csv(metadata_csv)
-        self.label_list = label_list
-        self.clip_len = clip_len
-        self.fps = fps
-        self.transform = transform
-
-        # debug counters
-        self.total_clips = 0
-        self.black_fallbacks = 0
-
-    def __len__(self):
-        return len(self.metadata)
-
-    def __getitem__(self, idx):
-        # increment total attempted
-        self.total_clips += 1
-
-        row = self.metadata.iloc[idx]
-        clip_path = row["clip_path"]
-        label_vector = self._get_label_vector(row["label"])
-
-        # Always read from start of the trimmed clip
-        frames = self._load_clip(clip_path, start_time=0)
-
-        # detect pure-black fallback (no frames read)
-        if np.all(frames[0] == 0):
-            self.black_fallbacks += 1
-
-        if self.transform:
-            frames = self.transform(frames)
-
-        # Convert to tensor: (C, T, H, W), normalize to [0,1]
-        clip_tensor = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0
-        label_tensor = torch.tensor(label_vector, dtype=torch.float32)
-
-        return clip_tensor, label_tensor
-
-    def _load_clip(self, clip_path, start_time):
-        """
-        Load clip_len seconds of frames from clip_path starting at start_time.
-        Resize to 112×112, pad if too short, or return black frames if none.
-        Returns np array of shape (T, H, W, C).
-        """
-        cap = cv2.VideoCapture(clip_path)
-        start_frame = int(start_time * self.fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-        total_frames = int(self.clip_len * self.fps)
-        frames = []
-        for _ in range(total_frames):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.resize(frame, (112, 112))
-            frames.append(frame)
-        cap.release()
-
-        # If no frames could be read, return black frames
-        if not frames:
-            black = np.zeros((112, 112, 3), dtype=np.uint8)
-            frames = [black] * total_frames
-        # Else if shorter than expected, pad with last frame
-        elif len(frames) < total_frames:
-            frames.extend([frames[-1]] * (total_frames - len(frames)))
-
-        return np.stack(frames, axis=0)
-
-    def _get_label_vector(self, label_str):
-        """
-        Convert single-label string into a one-hot vector.
-        """
-        vector = [0] * len(self.label_list)
-        label = label_str.strip()
-        if label in self.label_list:
-            vector[self.label_list.index(label)] = 1
-        return vector
+import torch
+from torch.utils.data import Dataset, random_split
+from torchvision.io import read_video
 
 
 def load_train_val_datasets(csv_path, label_list, val_ratio=0.2):
     """
-    Returns (train_ds, val_ds), splitting by val_ratio.
-    Applies VideoAugmentation() on training set.
+    Reads the CSV, constructs a PoloClipDataset, and splits into train/val.
+    Returns: (train_dataset, val_dataset)
     """
-    full_ds = VideoClipDataset(csv_path, label_list)
-
-    val_len = int(len(full_ds) * val_ratio)
-    train_len = len(full_ds) - val_len
-    train_ds, val_ds = torch.utils.data.random_split(full_ds, [train_len, val_len])
-
-    train_ds.dataset.transform = VideoAugmentation()
-    val_ds.dataset.transform = None
-
+    df = pd.read_csv(csv_path)
+    # Build the list of jersey‐numbers (integers) from your label_list
+    num_list = sorted(int(lbl.lstrip("#")) for lbl in label_list if lbl.startswith("#"))
+    full_ds = PoloClipDataset(df, num_list)
+    n_val = int(len(full_ds) * val_ratio)
+    n_train = len(full_ds) - n_val
+    train_ds, val_ds = random_split(full_ds, [n_train, n_val])
     return train_ds, val_ds
+
+
+class PoloClipDataset(Dataset):
+    """
+    Each item returns:
+      clip: Tensor[C, T, H, W] of floats in [0,1]
+      (pres_target, team_target):
+        pres_target: FloatTensor[N] of 0/1 presence flags
+        team_target: LongTensor[N] of {-1=unknown, 0=absent, 1=white, 2=dark}
+    """
+
+    def __init__(self, df, num_list, num_frames=16):
+        self.df = df.reset_index(drop=True)
+        self.num_list = num_list
+        self.num_frames = num_frames
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        # === load video file (using clip_path column) ===
+        video, _, _ = read_video(row["clip_path"])  # [T, H, W, 3], uint8
+        clip = self._sample_clip(video)  # → [C, T, H, W], float32 in [0,1]
+
+        # === parse the single raw-label for this clip ===
+        raw_lbl = row["label"].strip()  # e.g. "#12" or "W 6/5" or "D Possession"
+        pres, team = self._parse_number_label(raw_lbl)
+
+        return clip, (pres, team)
+
+    def _sample_clip(self, video):
+        """
+        Uniformly samples self.num_frames from the T frames and
+        rearranges to [C, T, H, W] float32 tensor.
+        """
+        T_total = video.shape[0]
+        if T_total >= self.num_frames:
+            indices = torch.linspace(0, T_total - 1, self.num_frames).long()
+        else:
+            # pad by looping
+            indices = torch.arange(self.num_frames) % T_total
+        frames = video[indices]  # [T, H, W, 3]
+        frames = frames.permute(3, 0, 1, 2).float() / 255.0
+        return frames
+
+    def _parse_number_label(self, raw):
+        """
+        Builds the two targets for the one raw label:
+          - pres_target[n] = 1 if #n is in this clip
+          - team_target[n] = 1 if white, 2 if dark, -1 if only number-known, 0 if absent
+        """
+        N = len(self.num_list)
+        pres = torch.zeros(N, dtype=torch.float32)
+        team = torch.full((N,), -1, dtype=torch.long)  # -1 = unknown/team-agnostic
+
+        # handle “#12”
+        if raw.startswith("#"):
+            n = int(raw.lstrip("#"))
+            if n in self.num_list:
+                i = self.num_list.index(n)
+                pres[i] = 1.0
+                team[i] = -1
+
+        # handle “W 6/5”
+        elif raw.startswith("W "):
+            parts = raw.split()
+            if parts[1].isdigit():
+                n = int(parts[1])
+                if n in self.num_list:
+                    i = self.num_list.index(n)
+                    pres[i] = 1.0
+                    team[i] = 1
+
+        # handle “D 6/5”
+        elif raw.startswith("D "):
+            parts = raw.split()
+            if parts[1].isdigit():
+                n = int(parts[1])
+                if n in self.num_list:
+                    i = self.num_list.index(n)
+                    pres[i] = 1.0
+                    team[i] = 2
+
+        return pres, team
