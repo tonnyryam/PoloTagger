@@ -1,5 +1,3 @@
-# pipeline/dataset.py
-
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, random_split
@@ -16,7 +14,13 @@ def load_train_val_datasets(csv_path, label_list, val_ratio=0.2):
 
 
 class PoloClipDataset(Dataset):
-    def __init__(self, df, num_list, num_frames=4):
+    """
+    Returns per item:
+      clip: Tensor[C, T, H, W] of floats in [0,1]
+      (pres_target, team_target)
+    """
+
+    def __init__(self, df, num_list, num_frames=2):
         self.df = df.reset_index(drop=True)
         self.num_list = num_list
         self.num_frames = num_frames
@@ -26,29 +30,27 @@ class PoloClipDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        video, _, _ = read_video(row["clip_path"])
-        clip = self._sample_clip(video)
+        video, _, _ = read_video(row["clip_path"])  # loads all frames
+        clip = self._sample_clip(video)  # but only keep 2 frames
 
-        raw_lbl = row["label"].strip()
-        pres, team = self._parse_number_label(raw_lbl)
-
+        raw = row["label"].strip()
+        pres, team = self._parse_number_label(raw)
         return clip, (pres, team)
 
     def _sample_clip(self, video):
-        T_total = video.shape[0]
-        if T_total >= self.num_frames:
-            indices = torch.linspace(0, T_total - 1, self.num_frames).long()
+        T = video.shape[0]
+        if T >= self.num_frames:
+            idxs = torch.linspace(0, T - 1, self.num_frames).long()
         else:
-            indices = torch.arange(self.num_frames) % T_total
-        frames = video[indices]
-        frames = frames.permute(3, 0, 1, 2).float().div(255.0)
+            idxs = torch.arange(self.num_frames) % T
+        frames = video[idxs]  # [T, H, W, 3]
+        frames = frames.permute(3, 0, 1, 2).float() / 255.0
         return frames
 
     def _parse_number_label(self, raw):
         N = len(self.num_list)
         pres = torch.zeros(N, dtype=torch.float32)
         team = torch.full((N,), -1, dtype=torch.long)
-
         if raw.startswith("#"):
             n = int(raw.lstrip("#"))
             if n in self.num_list:
@@ -70,5 +72,4 @@ class PoloClipDataset(Dataset):
                     i = self.num_list.index(n)
                     pres[i] = 1.0
                     team[i] = 2
-
         return pres, team
