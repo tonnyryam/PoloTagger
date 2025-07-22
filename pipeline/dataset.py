@@ -28,7 +28,7 @@ class PoloClipDataset(Dataset):
         team_target: LongTensor[N] of {-1=unknown, 0=absent, 1=white, 2=dark}
     """
 
-    def __init__(self, df, num_list, num_frames=16):
+    def __init__(self, df, num_list, num_frames=8):
         self.df = df.reset_index(drop=True)
         self.num_list = num_list
         self.num_frames = num_frames
@@ -43,7 +43,7 @@ class PoloClipDataset(Dataset):
         clip = self._sample_clip(video)  # → [C, T, H, W], float32 in [0,1]
 
         # === parse the single raw-label for this clip ===
-        raw_lbl = row["label"].strip()  # e.g. "#12" or "W 6/5" or "D Possession"
+        raw_lbl = row["label"].strip()  # e.g. "#12", "W 6/5", "D Possession"
         pres, team = self._parse_number_label(raw_lbl)
 
         return clip, (pres, team)

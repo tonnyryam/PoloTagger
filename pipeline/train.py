@@ -56,9 +56,7 @@ def train_model(model, loader, optimizer, alpha, device):
 
         pres_logits, team_logits = model(clips)
 
-        # Presence loss
         loss_pres = F.binary_cross_entropy_with_logits(pres_logits, pres_t)
-        # Team loss on valid entries
         mask = team_t >= 0
         if mask.any():
             valid_logits = team_logits[mask]
@@ -114,7 +112,10 @@ def main():
         "--epochs", type=int, default=10, help="Number of training epochs"
     )
     parser.add_argument(
-        "--batch_size", type=int, default=8, help="Batch size for training"
+        "--batch_size",
+        type=int,
+        default=4,
+        help="Batch size for training (reduced to save memory)",
     )
     parser.add_argument(
         "--alpha",
@@ -130,7 +131,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Log environment
     logger.info(f"SLURM_JOB_ID={os.environ.get('SLURM_JOB_ID', 'N/A')}")
     logger.info(f"HOSTNAME={socket.gethostname()}")
 
@@ -139,9 +139,10 @@ def main():
     train_ds, val_ds = load_train_val_datasets(args.csv, label_list)
     slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK")
     if slurm_cpus and slurm_cpus.isdigit():
-        n_workers = max(1, int(slurm_cpus) - 1)
+        base_workers = max(1, int(slurm_cpus) - 1)
     else:
-        n_workers = max(1, multiprocessing.cpu_count() - 1)
+        base_workers = max(1, multiprocessing.cpu_count() - 1)
+    n_workers = min(4, base_workers)  # cap at 4 workers to reduce memory
     logger.info(f"Using {n_workers} DataLoader workers")
 
     train_loader = DataLoader(
@@ -149,16 +150,16 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=n_workers,
-        pin_memory=True,
-        persistent_workers=True,
+        pin_memory=False,  # disable to save host RAM
+        persistent_workers=False,  # free workers between epochs
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=n_workers,
-        pin_memory=True,
-        persistent_workers=True,
+        pin_memory=False,
+        persistent_workers=False,
     )
 
     # Build model
@@ -175,7 +176,9 @@ def main():
         elapsed = time.time() - t0
 
         logger.info(
-            f"[Epoch {epoch}/{args.epochs}] Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f} (took {elapsed:.1f}s)"
+            f"[Epoch {epoch}/{args.epochs}] "
+            f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f} "
+            f"(took {elapsed:.1f}s)"
         )
 
     # Save final model
