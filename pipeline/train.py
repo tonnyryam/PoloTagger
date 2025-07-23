@@ -46,7 +46,7 @@ class PoloMultiTask(nn.Module):
 
 def train_model(model, loader, optimizer, alpha, device):
     model.train()
-    scaler = GradScaler()  # Removed deprecated device_type argument
+    scaler = GradScaler()
     running_loss = 0.0
 
     for clips, (pres_t, team_t) in loader:
@@ -116,8 +116,8 @@ def main():
     logger.info(f"SLURM_JOB_ID={os.environ.get('SLURM_JOB_ID', 'N/A')}")
     logger.info(f"HOSTNAME={socket.gethostname()}")
 
-    # DataLoader parallelism
-    n_workers = 4
+    # DataLoader parallelism (avoid OOM in workers)
+    n_workers = 0
     logger.info(f"Using {n_workers} DataLoader workers")
 
     train_ds, val_ds = load_train_val_datasets(args.csv, label_list)
@@ -126,14 +126,14 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=n_workers,
-        pin_memory=True,
+        pin_memory=False,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=n_workers,
-        pin_memory=True,
+        pin_memory=False,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -150,8 +150,7 @@ def main():
         val_loss = evaluate_model(model, val_loader, args.alpha, device)
         logger.info(
             f"[Epoch {epoch}/{args.epochs}] "
-            f"Train: {train_loss:.4f}  Val: {val_loss:.4f}  "
-            f"(took {time.time() - t0:.1f}s)"
+            f"Train: {train_loss:.4f}  Val: {val_loss:.4f}  (took {time.time() - t0:.1f}s)"
         )
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
