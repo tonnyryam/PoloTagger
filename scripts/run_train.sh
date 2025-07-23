@@ -6,7 +6,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
 #SBATCH --mail-user=tfrw2023@mymail.pomona.edu
 #SBATCH --mail-type=END,FAIL
@@ -55,7 +55,7 @@ $PYTHON_PATH pipeline/train.py \
   --features   "$FEATURE_DIR" \
   --out        "$OUTPUT_MODEL" \
   --epochs     10 \
-  --batch_size 8 \
+  --batch_size 4 \
   # --benchmark-data    # remove this if you don’t want the quick 10-batch timing
 
 echo "[INFO] Training complete; model saved to $OUTPUT_MODEL"
