@@ -46,7 +46,7 @@ class PoloMultiTask(nn.Module):
 
 def train_model(model, loader, optimizer, alpha, device):
     model.train()
-    scaler = GradScaler(device_type="cuda")
+    scaler = GradScaler()  # Removed deprecated device_type argument
     running_loss = 0.0
 
     for clips, (pres_t, team_t) in loader:
@@ -137,7 +137,6 @@ def main():
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Use the new weights enum instead of the old .default_weights
     base = r3d_18(weights=R3D_18_Weights.DEFAULT)
     model = PoloMultiTask(
         base, num_numbers=sum(1 for lbl in label_list if lbl.startswith("#"))
