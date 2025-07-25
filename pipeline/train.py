@@ -6,6 +6,10 @@ import logging
 import socket
 
 import torch
+
+# Enable cuDNN benchmarking for optimal 3D conv performance
+torch.backends.cudnn.benchmark = True
+
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
