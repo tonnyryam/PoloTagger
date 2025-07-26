@@ -74,7 +74,7 @@ EOF
   --input_dir    "$INPUT_DIR" \
   --out_dir      "$OUT_CLIPS" \
   --metadata_csv "$OUT_CSV" \
-  --clip_len     "$CLIP_LEN" \
+  --num_frames   "$CLIP_LEN" \
   --fps          "$FPS"
 
 # 11. Verify success
